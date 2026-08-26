@@ -30,7 +30,7 @@ jobs:
           import path from 'node:path';
           import { writeFile } from 'node:fs/promises';
 
-          const currentUrl = 'https://seoul-crowd-radar-v3.vercel.app';
+          const currentUrl = 'https://seoul-crowd-radar-v4.vercel.app';
           const targets = [
             { name: 'reference', url: 'https://gjdong.vercel.app/crowd' },
             { name: 'current', url: currentUrl },
