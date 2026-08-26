@@ -2,8 +2,8 @@
 
 import { useEffect, useRef } from "react";
 import * as maplibregl from "maplibre-gl";
-import type { Map as MapLibreMap, Marker, StyleSpecification } from "maplibre-gl";
-import { CROWD_META } from "@/lib/crowd";
+import type { LngLatBoundsLike, Map as MapLibreMap, Marker, StyleSpecification } from "maplibre-gl";
+import { CROWD_META, formatPopulationRange } from "@/lib/crowd";
 import type { RankedPlace } from "@/types/place";
 
 const SEOUL_CENTER: [number, number] = [126.978, 37.5665];
@@ -11,30 +11,34 @@ const SEOUL_CENTER: [number, number] = [126.978, 37.5665];
 const style: StyleSpecification = {
   version: 8,
   sources: {
-    osm: {
+    carto: {
       type: "raster",
-      tiles: ["https://tile.openstreetmap.org/{z}/{x}/{y}.png"],
+      tiles: [
+        "https://a.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png",
+        "https://b.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png",
+      ],
       tileSize: 256,
-      attribution: "© OpenStreetMap contributors",
+      attribution: "© OpenStreetMap contributors © CARTO",
     },
   },
-  layers: [{ id: "osm", type: "raster", source: "osm" }],
+  layers: [{ id: "carto", type: "raster", source: "carto" }],
 };
 
 export function CrowdMap({
   places,
   selectedSlug,
   onSelect,
-  compact = false,
+  showLabels = true,
 }: {
   places: RankedPlace[];
   selectedSlug?: string;
   onSelect?: (slug: string) => void;
-  compact?: boolean;
+  showLabels?: boolean;
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
   const markersRef = useRef<Marker[]>([]);
+  const hasFitRef = useRef(false);
 
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return;
@@ -43,13 +47,15 @@ export function CrowdMap({
       container: containerRef.current,
       style,
       center: SEOUL_CENTER,
-      zoom: compact ? 12.2 : 11.25,
+      zoom: 11.15,
       minZoom: 9,
       maxZoom: 17,
       attributionControl: false,
+      dragRotate: false,
+      pitchWithRotate: false,
     });
 
-    map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "top-right");
+    map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "bottom-right");
     map.addControl(new maplibregl.AttributionControl({ compact: true }), "bottom-right");
     mapRef.current = map;
 
@@ -59,7 +65,7 @@ export function CrowdMap({
       map.remove();
       mapRef.current = null;
     };
-  }, [compact]);
+  }, []);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -71,20 +77,36 @@ export function CrowdMap({
     places.forEach((place) => {
       const element = document.createElement("button");
       element.type = "button";
-      element.className = `crowd-marker crowd-marker--${place.crowd.level}${selectedSlug === place.slug ? " crowd-marker--selected" : ""}`;
+      element.className = [
+        "radar-marker",
+        `radar-marker--${place.crowd.level}`,
+        selectedSlug === place.slug ? "is-selected" : "",
+        showLabels || selectedSlug === place.slug ? "has-label" : "",
+      ].filter(Boolean).join(" ");
       element.setAttribute(
         "aria-label",
-        `${place.name}, ${CROWD_META[place.crowd.level].label}, 추천 ${place.score}점`,
+        `${place.name}, ${CROWD_META[place.crowd.level].label}, ${formatPopulationRange(place.crowd.minPopulation, place.crowd.maxPopulation)}`,
       );
-      element.innerHTML = `<span class="crowd-marker__score">${place.score}</span><span class="crowd-marker__name">${place.name}</span>`;
+      element.innerHTML = `<span class="radar-marker__dot"></span><span class="radar-marker__label">${place.name}</span>`;
       element.addEventListener("click", () => onSelect?.(place.slug));
 
-      const marker = new maplibregl.Marker({ element, anchor: "bottom" })
+      const marker = new maplibregl.Marker({ element, anchor: "center" })
         .setLngLat([place.longitude, place.latitude])
         .addTo(map);
       markersRef.current.push(marker);
     });
-  }, [onSelect, places, selectedSlug]);
+
+    if (!hasFitRef.current && places.length > 1) {
+      const longitudes = places.map((place) => place.longitude);
+      const latitudes = places.map((place) => place.latitude);
+      const bounds: LngLatBoundsLike = [
+        [Math.min(...longitudes), Math.min(...latitudes)],
+        [Math.max(...longitudes), Math.max(...latitudes)],
+      ];
+      map.fitBounds(bounds, { padding: 70, maxZoom: 12.3, duration: 0 });
+      hasFitRef.current = true;
+    }
+  }, [onSelect, places, selectedSlug, showLabels]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -92,10 +114,10 @@ export function CrowdMap({
     if (!map || !selected) return;
     map.easeTo({
       center: [selected.longitude, selected.latitude],
-      zoom: Math.max(map.getZoom(), compact ? 13.2 : 12.4),
-      duration: 650,
+      zoom: Math.max(map.getZoom(), 13),
+      duration: 550,
     });
-  }, [compact, places, selectedSlug]);
+  }, [places, selectedSlug]);
 
   return <div ref={containerRef} className="crowd-map" aria-label="서울 장소 혼잡도 지도" />;
 }

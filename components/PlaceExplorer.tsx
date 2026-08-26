@@ -1,37 +1,71 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { CompassIcon, ListIcon, MapIcon, RefreshIcon, SearchIcon, SparklesIcon } from "@/components/icons";
+import Link from "next/link";
+import { CompassIcon, RefreshIcon, SearchIcon } from "@/components/icons";
 import { CrowdMap } from "@/components/CrowdMap";
-import { PlaceCard } from "@/components/PlaceCard";
-import { CROWD_META } from "@/lib/crowd";
+import { CROWD_META, formatPopulationRange } from "@/lib/crowd";
 import { haversineDistanceKm } from "@/lib/geo";
 import { scorePlace, type RecommendationIntent } from "@/lib/recommendation";
-import type { Place, PlacesPayload, RankedPlace } from "@/types/place";
+import type { CrowdLevel, Place, PlaceCategory, PlacesPayload, RankedPlace } from "@/types/place";
 
-const filters: Array<{ value: RecommendationIntent; label: string; icon: string }> = [
-  { value: "all", label: "전체", icon: "✦" },
-  { value: "date", label: "데이트", icon: "♡" },
-  { value: "walk", label: "산책", icon: "♧" },
-  { value: "hotspot", label: "핫플", icon: "●" },
+const crowdLevels: CrowdLevel[] = ["relaxed", "normal", "busy", "veryBusy"];
+const crowdRank: Record<CrowdLevel, number> = {
+  relaxed: 0,
+  normal: 1,
+  busy: 2,
+  veryBusy: 3,
+};
+
+const presets: Array<{ value: RecommendationIntent; label: string; icon: string }> = [
+  { value: "family", label: "아이와 나들이", icon: "🧒" },
+  { value: "date", label: "데이트", icon: "💐" },
+  { value: "hotspot", label: "지금 핫플", icon: "🔥" },
   { value: "quiet", label: "한적한 곳", icon: "☁" },
-  { value: "family", label: "아이와", icon: "⌂" },
-  { value: "night", label: "야간", icon: "☾" },
-  { value: "photo", label: "사진", icon: "◇" },
 ];
 
-type SortOption = "recommended" | "relaxed" | "busy" | "distance";
-type MobileView = "list" | "map";
+const categories: Array<{ value: "all" | PlaceCategory; label: string }> = [
+  { value: "all", label: "전체" },
+  { value: "walk", label: "공원·산책" },
+  { value: "hotspot", label: "상권·핫플" },
+  { value: "photo", label: "문화·사진" },
+  { value: "night", label: "야간" },
+  { value: "family", label: "가족" },
+];
+
+type SortOption = "busy" | "relaxed" | "name" | "distance";
+
+function placeType(place: Place): string {
+  if (place.categories.includes("walk") || place.categories.includes("quiet")) return "공원·산책";
+  if (place.categories.includes("hotspot")) return "발달상권";
+  if (place.categories.includes("photo")) return "문화·관광";
+  return "인구밀집지역";
+}
+
+function formatClock(value?: string): string {
+  const parsed = value ? new Date(value) : new Date();
+  const date = Number.isNaN(parsed.getTime()) ? new Date() : parsed;
+  return new Intl.DateTimeFormat("ko-KR", {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).format(date);
+}
 
 export function PlaceExplorer({ initialPlaces }: { initialPlaces: Place[] }) {
   const [places, setPlaces] = useState(initialPlaces);
   const [mode, setMode] = useState<PlacesPayload["mode"]>("mock");
-  const [notice, setNotice] = useState("API 키 없이도 전체 UI를 확인할 수 있는 데모 모드입니다.");
+  const [notice, setNotice] = useState("API 키 없이 동작하는 데모 데이터입니다.");
+  const [updatedAt, setUpdatedAt] = useState<string>();
   const [query, setQuery] = useState("");
   const [intent, setIntent] = useState<RecommendationIntent>("all");
-  const [sort, setSort] = useState<SortOption>("recommended");
-  const [mobileView, setMobileView] = useState<MobileView>("list");
-  const [selectedSlug, setSelectedSlug] = useState(initialPlaces[0]?.slug);
+  const [category, setCategory] = useState<"all" | PlaceCategory>("all");
+  const [levels, setLevels] = useState<Set<CrowdLevel>>(new Set());
+  const [sort, setSort] = useState<SortOption>("busy");
+  const [selectedSlug, setSelectedSlug] = useState<string>();
+  const [favorites, setFavorites] = useState<Set<string>>(new Set());
+  const [showLabels, setShowLabels] = useState(true);
+  const [patternMode, setPatternMode] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [location, setLocation] = useState<{ latitude: number; longitude: number }>();
   const [locationMessage, setLocationMessage] = useState("");
@@ -45,9 +79,10 @@ export function PlaceExplorer({ initialPlaces }: { initialPlaces: Place[] }) {
       const payload = (await response.json()) as PlacesPayload;
       setPlaces(payload.places);
       setMode(payload.mode);
+      setUpdatedAt(payload.updatedAt);
       setNotice(payload.notice ?? "장소 데이터를 갱신했습니다.");
     } catch {
-      setNotice("데이터 갱신에 실패해 마지막으로 확인한 화면을 유지하고 있습니다.");
+      setNotice("데이터 갱신에 실패해 마지막으로 확인한 정보를 표시합니다.");
     } finally {
       if (manual) setIsRefreshing(false);
     }
@@ -59,11 +94,20 @@ export function PlaceExplorer({ initialPlaces }: { initialPlaces: Place[] }) {
     return () => window.clearInterval(interval);
   }, [loadPlaces]);
 
-  const rankedPlaces = useMemo<RankedPlace[]>(() => {
-    const normalizedQuery = query.trim().toLocaleLowerCase("ko-KR");
-    const crowdOrder = { relaxed: 0, normal: 1, busy: 2, veryBusy: 3 } as const;
+  const counts = useMemo(() => {
+    return crowdLevels.reduce<Record<CrowdLevel, number>>(
+      (acc, level) => {
+        acc[level] = places.filter((place) => place.crowd.level === level).length;
+        return acc;
+      },
+      { relaxed: 0, normal: 0, busy: 0, veryBusy: 0 },
+    );
+  }, [places]);
 
-    const enriched = places
+  const filteredPlaces = useMemo<RankedPlace[]>(() => {
+    const normalizedQuery = query.trim().toLocaleLowerCase("ko-KR");
+
+    return places
       .map((place) => {
         const distanceKm = location
           ? haversineDistanceKm(location, {
@@ -79,6 +123,8 @@ export function PlaceExplorer({ initialPlaces }: { initialPlaces: Place[] }) {
       })
       .filter((place) => {
         if (intent !== "all" && !place.categories.includes(intent)) return false;
+        if (category !== "all" && !place.categories.includes(category)) return false;
+        if (levels.size > 0 && !levels.has(place.crowd.level)) return false;
         if (!normalizedQuery) return true;
         const haystack = [
           place.name,
@@ -91,31 +137,41 @@ export function PlaceExplorer({ initialPlaces }: { initialPlaces: Place[] }) {
           .join(" ")
           .toLocaleLowerCase("ko-KR");
         return haystack.includes(normalizedQuery);
-      });
-
-    return enriched.sort((a, b) => {
-      if (sort === "relaxed") return crowdOrder[a.crowd.level] - crowdOrder[b.crowd.level] || b.score - a.score;
-      if (sort === "busy") return crowdOrder[b.crowd.level] - crowdOrder[a.crowd.level] || b.score - a.score;
-      if (sort === "distance") {
+      })
+      .sort((a, b) => {
+        if (sort === "busy") return crowdRank[b.crowd.level] - crowdRank[a.crowd.level] || b.score - a.score;
+        if (sort === "relaxed") return crowdRank[a.crowd.level] - crowdRank[b.crowd.level] || b.score - a.score;
+        if (sort === "name") return a.name.localeCompare(b.name, "ko-KR");
         return (a.distanceKm ?? Number.POSITIVE_INFINITY) - (b.distanceKm ?? Number.POSITIVE_INFINITY);
-      }
-      return b.score - a.score;
-    });
-  }, [intent, location, places, query, sort]);
+      });
+  }, [category, intent, levels, location, places, query, sort]);
 
-  useEffect(() => {
-    if (rankedPlaces.length === 0) return;
-    if (!rankedPlaces.some((place) => place.slug === selectedSlug)) {
-      setSelectedSlug(rankedPlaces[0].slug);
-    }
-  }, [rankedPlaces, selectedSlug]);
+  const selectedPlace = filteredPlaces.find((place) => place.slug === selectedSlug)
+    ?? places.find((place) => place.slug === selectedSlug);
+
+  const toggleLevel = (level: CrowdLevel) => {
+    setLevels((current) => {
+      const next = new Set(current);
+      if (next.has(level)) next.delete(level);
+      else next.add(level);
+      return next;
+    });
+  };
+
+  const toggleFavorite = (slug: string) => {
+    setFavorites((current) => {
+      const next = new Set(current);
+      if (next.has(slug)) next.delete(slug);
+      else next.add(slug);
+      return next;
+    });
+  };
 
   const locate = () => {
     if (!navigator.geolocation) {
-      setLocationMessage("이 브라우저는 위치 기능을 지원하지 않아요.");
+      setLocationMessage("이 브라우저에서는 위치 기능을 사용할 수 없습니다.");
       return;
     }
-
     setIsLocating(true);
     setLocationMessage("");
     navigator.geolocation.getCurrentPosition(
@@ -125,137 +181,216 @@ export function PlaceExplorer({ initialPlaces }: { initialPlaces: Place[] }) {
           longitude: position.coords.longitude,
         });
         setSort("distance");
-        setLocationMessage("현재 위치에서 가까운 순서로 정렬했어요.");
+        setLocationMessage("현재 위치에서 가까운 순서로 정렬했습니다.");
         setIsLocating(false);
       },
       () => {
-        setLocationMessage("위치 권한을 허용하면 가까운 장소를 계산할 수 있어요.");
+        setLocationMessage("위치 권한을 허용하면 가까운 장소를 계산할 수 있습니다.");
         setIsLocating(false);
       },
       { enableHighAccuracy: false, timeout: 8_000, maximumAge: 300_000 },
     );
   };
 
-  const relaxedCount = places.filter((place) => place.crowd.level === "relaxed").length;
-  const busyCount = places.filter((place) => place.crowd.level === "veryBusy").length;
-  const topPlace = rankedPlaces[0];
-  const modeLabel = mode === "live" ? "서울 실데이터" : mode === "mixed" ? "실데이터 + fallback" : "데모 데이터";
+  const clearFilters = () => {
+    setIntent("all");
+    setCategory("all");
+    setLevels(new Set<CrowdLevel>());
+    setQuery("");
+  };
+
+  const modeLabel = mode === "live" ? "서울 실시간 데이터" : mode === "mixed" ? "실시간 + 대체 데이터" : "데모 데이터";
 
   return (
-    <main className="explorer-page">
-      <section className="explorer-hero">
-        <div className="explorer-hero__copy">
-          <span className="eyebrow"><SparklesIcon /> 서울 실시간 장소 추천</span>
-          <h1>지금 어디 갈까요?</h1>
-          <p>사람이 얼마나 많은지, 내 목적에 잘 맞는지 한 화면에서 비교해보세요.</p>
+    <main className="radar-page">
+      <div className={`radar-alert radar-alert--${mode}`} role="status">
+        <span aria-hidden>△</span>
+        <strong>{modeLabel}</strong>
+        <p>{notice}</p>
+        <button type="button" onClick={() => void loadPlaces(true)} disabled={isRefreshing}>
+          <RefreshIcon className={isRefreshing ? "is-spinning" : ""} />
+          갱신
+        </button>
+      </div>
 
-          <div className="search-box">
-            <SearchIcon />
-            <input
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              placeholder="성수, 홍대, 서울숲을 검색해보세요"
-              aria-label="장소 검색"
-            />
-            {query && <button type="button" onClick={() => setQuery("")} aria-label="검색어 지우기">×</button>}
+      <section className="radar-workspace">
+        <aside className="radar-sidebar" aria-label="서울 장소 목록과 필터">
+          <div className="radar-search-row">
+            <label className="radar-search">
+              <SearchIcon />
+              <input
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder="명소·주소 검색 (예: 성수, 서울숲)"
+                aria-label="장소 검색"
+              />
+              {query && (
+                <button type="button" onClick={() => setQuery("")} aria-label="검색어 지우기">×</button>
+              )}
+            </label>
+            <button type="button" className="radar-nearby" onClick={locate} disabled={isLocating}>
+              <CompassIcon />
+              {isLocating ? "확인 중" : "내 주변"}
+            </button>
           </div>
+          {locationMessage && <p className="radar-location-message">{locationMessage}</p>}
 
-          <div className="filter-row" aria-label="추천 목적 필터">
-            {filters.map((filter) => (
+          <div className="radar-chip-strip radar-chip-strip--presets" aria-label="목적별 빠른 필터">
+            <button type="button" className="radar-chip radar-chip--spark">✣ MBTI 추천</button>
+            {presets.map((preset) => (
               <button
-                key={filter.value}
                 type="button"
-                className={intent === filter.value ? "is-active" : ""}
-                onClick={() => setIntent(filter.value)}
+                key={preset.value}
+                className={`radar-chip${intent === preset.value ? " is-active" : ""}`}
+                aria-pressed={intent === preset.value}
+                onClick={() => setIntent(intent === preset.value ? "all" : preset.value)}
               >
-                <span>{filter.icon}</span>{filter.label}
+                <span aria-hidden>{preset.icon}</span>{preset.label}
               </button>
             ))}
           </div>
-        </div>
 
-        <div className="hero-insight-card">
-          <div className="hero-insight-card__glow" />
-          <span className="hero-insight-card__label">오늘의 첫 추천</span>
-          <strong>{topPlace?.name ?? "조건에 맞는 장소를 찾는 중"}</strong>
-          <p>{topPlace ? `${topPlace.score}점 · ${CROWD_META[topPlace.crowd.level].label}` : "검색 조건을 바꿔보세요."}</p>
-          <div className="hero-insight-card__stats">
-            <span><b>{relaxedCount}</b>여유로운 곳</span>
-            <span><b>{places.length}</b>비교 장소</span>
-            <span><b>{busyCount}</b>매우 붐빔</span>
+          <div className="radar-chip-strip radar-chip-strip--levels" aria-label="혼잡도 필터">
+            {crowdLevels.map((level) => (
+              <button
+                type="button"
+                key={level}
+                className={`radar-level-chip radar-level-chip--${level}${levels.has(level) ? " is-active" : ""}`}
+                aria-pressed={levels.has(level)}
+                onClick={() => toggleLevel(level)}
+              >
+                <i />
+                {CROWD_META[level].shortLabel}
+                <b>{counts[level]}</b>
+              </button>
+            ))}
+            {(intent !== "all" || category !== "all" || levels.size > 0 || query) && (
+              <button type="button" className="radar-clear" onClick={clearFilters}>초기화</button>
+            )}
           </div>
-        </div>
-      </section>
 
-      <div className="data-notice" role="status">
-        <span className={`data-mode data-mode--${mode}`}><i />{modeLabel}</span>
-        <p>{notice}</p>
-        <button type="button" onClick={() => void loadPlaces(true)} disabled={isRefreshing}>
-          <RefreshIcon className={isRefreshing ? "is-spinning" : ""} /> 새로고침
-        </button>
-      </div>
-
-      <div className="mobile-view-switch" aria-label="보기 방식">
-        <button type="button" className={mobileView === "list" ? "is-active" : ""} onClick={() => setMobileView("list")}>
-          <ListIcon /> 추천
-        </button>
-        <button type="button" className={mobileView === "map" ? "is-active" : ""} onClick={() => setMobileView("map")}>
-          <MapIcon /> 지도
-        </button>
-      </div>
-
-      <section className="explorer-workspace">
-        <aside className={`place-panel${mobileView === "list" ? " is-mobile-visible" : ""}`}>
-          <div className="place-panel__toolbar">
-            <div>
-              <span className="section-kicker">추천 장소</span>
-              <h2>{rankedPlaces.length}곳을 찾았어요</h2>
+          <div className="radar-category-row">
+            <div className="radar-category-scroll" aria-label="장소 유형">
+              {categories.map((item) => (
+                <button
+                  type="button"
+                  key={item.value}
+                  className={`radar-category${category === item.value ? " is-active" : ""}`}
+                  aria-pressed={category === item.value}
+                  onClick={() => setCategory(item.value)}
+                >
+                  {item.label}
+                </button>
+              ))}
             </div>
             <select value={sort} onChange={(event) => setSort(event.target.value as SortOption)} aria-label="정렬 방식">
-              <option value="recommended">추천순</option>
-              <option value="relaxed">여유순</option>
               <option value="busy">붐빔순</option>
+              <option value="relaxed">여유순</option>
+              <option value="name">가나다</option>
               <option value="distance" disabled={!location}>가까운순</option>
             </select>
           </div>
 
-          <button type="button" className="nearby-button" onClick={locate} disabled={isLocating}>
-            <CompassIcon />
-            <span><strong>{isLocating ? "현재 위치 확인 중" : "내 주변에서 찾아보기"}</strong><small>{locationMessage || "위치 권한은 브라우저 안에서만 사용해요."}</small></span>
-          </button>
+          <div className="radar-list-head">
+            <span>서울 주요 장소 {filteredPlaces.length}곳</span>
+            <span>{formatClock(updatedAt)} 기준</span>
+          </div>
 
-          <div className="place-list">
-            {rankedPlaces.map((place) => (
-              <PlaceCard
-                key={place.slug}
-                place={place}
-                selected={selectedSlug === place.slug}
-                onSelect={(slug) => {
-                  setSelectedSlug(slug);
-                  if (window.innerWidth < 900) setMobileView("map");
-                }}
-              />
-            ))}
-            {rankedPlaces.length === 0 && (
-              <div className="empty-results">
-                <span>⌕</span>
-                <h3>조건에 맞는 장소가 없어요</h3>
-                <p>검색어를 줄이거나 다른 목적 필터를 선택해보세요.</p>
-                <button type="button" onClick={() => { setQuery(""); setIntent("all"); }}>전체 장소 다시 보기</button>
+          <div className="radar-list" role="list">
+            {filteredPlaces.map((place, index) => {
+              const selected = selectedSlug === place.slug;
+              const favorite = favorites.has(place.slug);
+              return (
+                <article
+                  key={place.slug}
+                  className={`radar-row${selected ? " is-selected" : ""}`}
+                  role="listitem"
+                >
+                  <button
+                    type="button"
+                    className="radar-row__main"
+                    onClick={() => setSelectedSlug(place.slug)}
+                  >
+                    <span className="radar-row__index">{String(index + 1).padStart(2, "0")}</span>
+                    <span className="radar-row__copy">
+                      <strong>{place.name}</strong>
+                      <small>
+                        {placeType(place)}
+                        <span>·</span>
+                        {place.district}
+                        {place.distanceKm != null && <><span>·</span>{place.distanceKm.toFixed(1)}km</>}
+                      </small>
+                    </span>
+                    <span className="radar-row__population">{formatPopulationRange(place.crowd.minPopulation, place.crowd.maxPopulation)}</span>
+                    <span className={`radar-badge radar-badge--${place.crowd.level}`}>
+                      {CROWD_META[place.crowd.level].shortLabel}
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    className={`radar-favorite${favorite ? " is-active" : ""}`}
+                    onClick={() => toggleFavorite(place.slug)}
+                    aria-label={`${place.name} ${favorite ? "즐겨찾기 해제" : "즐겨찾기"}`}
+                  >
+                    {favorite ? "★" : "☆"}
+                  </button>
+                </article>
+              );
+            })}
+
+            {filteredPlaces.length === 0 && (
+              <div className="radar-empty">
+                <strong>조건에 맞는 장소가 없습니다.</strong>
+                <p>검색어 또는 혼잡도 필터를 줄여보세요.</p>
+                <button type="button" onClick={clearFilters}>전체 장소 보기</button>
               </div>
             )}
           </div>
+
+          <footer className="radar-source">
+            <span>서울 열린데이터광장 연동 준비 · 현재 {modeLabel}</span>
+            <a href="https://github.com/beerAndNacho/place-to-recommend-something" target="_blank" rel="noreferrer">GitHub ↗</a>
+          </footer>
         </aside>
 
-        <div className={`map-panel${mobileView === "map" ? " is-mobile-visible" : ""}`}>
-          <CrowdMap places={rankedPlaces} selectedSlug={selectedSlug} onSelect={setSelectedSlug} />
-          <div className="map-overlay-card">
-            <span>혼잡도 범례</span>
-            {(["relaxed", "normal", "busy", "veryBusy"] as const).map((level) => (
-              <i key={level}><b className={`legend-dot legend-dot--${level}`} />{CROWD_META[level].shortLabel}</i>
+        <section id="radar-map" className={`radar-map-pane${patternMode ? " is-pattern" : ""}`} aria-label="서울 혼잡도 지도">
+          <CrowdMap
+            places={filteredPlaces}
+            selectedSlug={selectedSlug}
+            onSelect={setSelectedSlug}
+            showLabels={showLabels}
+          />
+
+          <div className="radar-map-tools">
+            <button type="button" className={showLabels ? "is-active" : ""} onClick={() => setShowLabels((value) => !value)}>
+              ◉ 이름표
+            </button>
+            <button type="button" className={patternMode ? "is-active" : ""} onClick={() => setPatternMode((value) => !value)}>
+              ◷ 시간대 패턴
+            </button>
+          </div>
+
+          <div className="radar-map-legend" aria-label="혼잡도 범례">
+            {crowdLevels.map((level) => (
+              <span key={level}><i className={`radar-dot radar-dot--${level}`} />{counts[level]}</span>
             ))}
           </div>
-        </div>
+
+          {selectedPlace && (
+            <div className="radar-map-selection">
+              <button type="button" aria-label="선택 해제" onClick={() => setSelectedSlug(undefined)}>×</button>
+              <div>
+                <span>{selectedPlace.district} · {placeType(selectedPlace)}</span>
+                <strong>{selectedPlace.name}</strong>
+                <small>{formatPopulationRange(selectedPlace.crowd.minPopulation, selectedPlace.crowd.maxPopulation)} · {selectedPlace.crowd.message}</small>
+              </div>
+              <span className={`radar-badge radar-badge--${selectedPlace.crowd.level}`}>
+                {CROWD_META[selectedPlace.crowd.level].shortLabel}
+              </span>
+              <Link href={`/place/${selectedPlace.slug}`}>상세보기 →</Link>
+            </div>
+          )}
+        </section>
       </section>
     </main>
   );
