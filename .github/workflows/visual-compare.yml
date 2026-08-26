@@ -20,7 +20,7 @@ jobs:
         run: |
           npm install --no-save playwright@1.52.0
           npx playwright install --with-deps chromium
-      - name: Capture reference and redesigned deployment
+      - name: Capture reference and final deployment
         shell: bash
         run: |
           set -euo pipefail
@@ -30,7 +30,7 @@ jobs:
           import path from 'node:path';
           import { writeFile } from 'node:fs/promises';
 
-          const currentUrl = 'https://seoul-crowd-radar-v2.vercel.app';
+          const currentUrl = 'https://seoul-crowd-radar-v3.vercel.app';
           const targets = [
             { name: 'reference', url: 'https://gjdong.vercel.app/crowd' },
             { name: 'current', url: currentUrl },
@@ -42,7 +42,7 @@ jobs:
 
           async function loadWithRetry(page, url) {
             let response;
-            for (let attempt = 1; attempt <= 30; attempt += 1) {
+            for (let attempt = 1; attempt <= 36; attempt += 1) {
               response = await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => undefined);
               if (response?.status() === 200 && !page.url().includes('/login')) return response;
               await page.waitForTimeout(5000);
@@ -72,9 +72,10 @@ jobs:
               records.push(record);
               console.log(JSON.stringify(record));
               if (target.name === 'current') {
-                if (response?.status() !== 200) throw new Error(`redesigned deployment returned ${response?.status()}`);
-                if (!bodyText.includes('서울 인파레이더')) throw new Error('dashboard title missing');
-                if (!bodyText.includes('장소')) throw new Error('place count label missing');
+                if (response?.status() !== 200) throw new Error(`final deployment returned ${response?.status()}`);
+                for (const marker of ['서울 인파레이더', '발달상권', '인구밀집지역', '고궁·문화유산']) {
+                  if (!bodyText.includes(marker)) throw new Error(`missing UI marker: ${marker}`);
+                }
               }
             }
             await context.close();
@@ -94,17 +95,8 @@ jobs:
           await browser.close();
           EOF
           node capture.mjs | tee visual-captures/capture-log.txt
-      - name: Package source snapshot
-        shell: bash
-        run: |
-          tar --exclude=.git --exclude=node_modules --exclude=.next --exclude=visual-captures -czf /tmp/source-snapshot.tar.gz .
       - uses: actions/upload-artifact@v4
         with:
           name: visual-compare
           path: visual-captures
-          if-no-files-found: error
-      - uses: actions/upload-artifact@v4
-        with:
-          name: source-snapshot
-          path: /tmp/source-snapshot.tar.gz
           if-no-files-found: error
