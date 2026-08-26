@@ -21,9 +21,11 @@ jobs:
           npm install --no-save playwright@1.52.0
           npx playwright install --with-deps chromium
       - name: Capture reference and current deployment
+        shell: bash
         run: |
+          set -euo pipefail
           mkdir -p visual-captures
-          cat > /tmp/capture.mjs <<'EOF'
+          cat > capture.mjs <<'EOF'
           import { chromium } from 'playwright';
           import path from 'node:path';
 
@@ -53,15 +55,13 @@ jobs:
               });
               const bodyText = await page.locator('body').innerText().catch(() => '');
               const title = await page.title().catch(() => '');
-              await Bun?.write?.('', '').catch?.(() => {});
               console.log(JSON.stringify({ target: target.name, size: size.name, status: response?.status(), title, body: bodyText.slice(0, 2000) }));
             }
             await context.close();
           }
           await browser.close();
           EOF
-          sed -i "/Bun?.write/d" /tmp/capture.mjs
-          node /tmp/capture.mjs | tee visual-captures/capture-log.txt
+          node capture.mjs | tee visual-captures/capture-log.txt
       - uses: actions/upload-artifact@v4
         with:
           name: visual-compare
