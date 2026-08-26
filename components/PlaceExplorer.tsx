@@ -148,8 +148,8 @@ export function PlaceExplorer({ initialPlaces }: { initialPlaces: Place[] }) {
         return haystack.includes(normalizedQuery);
       })
       .sort((a, b) => {
-        if (sort === "busy") return crowdRank[b.crowd.level] - crowdRank[a.crowd.level] || b.score - a.score;
-        if (sort === "relaxed") return crowdRank[a.crowd.level] - crowdRank[b.crowd.level] || b.score - a.score;
+        if (sort === "busy") return crowdRank[b.crowd.level] - crowdRank[a.crowd.level] || a.name.localeCompare(b.name, "ko-KR");
+        if (sort === "relaxed") return crowdRank[a.crowd.level] - crowdRank[b.crowd.level] || a.name.localeCompare(b.name, "ko-KR");
         if (sort === "name") return a.name.localeCompare(b.name, "ko-KR");
         return (a.distanceKm ?? Number.POSITIVE_INFINITY) - (b.distanceKm ?? Number.POSITIVE_INFINITY);
       });

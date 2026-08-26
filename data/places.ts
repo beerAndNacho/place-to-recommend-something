@@ -208,7 +208,7 @@ function genericDefinition(row: SeoulHotspotRow, index: number): PlaceDefinition
   return {
     id: override?.slug ?? `seoul-spot-${String(index + 1).padStart(3, "0")}`,
     slug: override?.slug ?? `seoul-spot-${String(index + 1).padStart(3, "0")}`,
-    name: override?.name ?? row.area_nm,
+    name: row.area_nm,
     apiAreaName: row.area_nm,
     district: override?.district ?? "서울",
     latitude: Number(row.x),
