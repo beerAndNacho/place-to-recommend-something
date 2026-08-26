@@ -1,307 +1,257 @@
+import seoulHotspots from "@/data/seoul-hotspots.json";
 import type {
   CrowdLevel,
   CrowdTrend,
   ForecastPoint,
   Place,
+  PlaceCategory,
   PlaceDefinition,
 } from "@/types/place";
 
-const forecast = (
-  values: Array<[string, number, number, CrowdLevel]>,
-): ForecastPoint[] =>
-  values.map(([label, min, max, level]) => ({ label, min, max, level }));
+interface SeoulHotspotRow {
+  area_nm: string;
+  congestion_color: string;
+  x: string;
+  y: string;
+  area_congest_lvl: string;
+  category: string;
+  area_congest_num: number;
+}
 
-const place = (
-  definition: PlaceDefinition,
-  crowd: {
-    level: CrowdLevel;
-    min: number;
-    max: number;
-    message: string;
-    trend: CrowdTrend;
-    forecast: ForecastPoint[];
-  },
-): Place => ({
-  ...definition,
-  crowd: {
-    level: crowd.level,
-    minPopulation: crowd.min,
-    maxPopulation: crowd.max,
-    message: crowd.message,
-    trend: crowd.trend,
-    measuredAt: "데모 시나리오",
-    source: "mock",
-    forecast: crowd.forecast,
-  },
-});
+interface PlaceOverride {
+  slug: string;
+  name?: string;
+  district: string;
+  summary: string;
+  categories: PlaceCategory[];
+  tags: string[];
+  searchKeywords: string[];
+  recommendationBase: number;
+}
 
-export const PLACE_DEFINITIONS: PlaceDefinition[] = [
-  {
-    id: "seoul-forest",
+const overrides: Record<string, PlaceOverride> = {
+  "서울숲공원": {
     slug: "seoul-forest",
     name: "서울숲",
-    apiAreaName: "서울숲공원",
     district: "성동구",
-    latitude: 37.5444,
-    longitude: 127.0374,
     summary: "넓은 산책로와 잔디밭이 있어 데이트와 가벼운 휴식에 잘 맞아요.",
     categories: ["date", "walk", "quiet", "photo", "family"],
     tags: ["데이트", "산책", "피크닉"],
     searchKeywords: ["서울숲공원", "성수", "뚝섬", "공원"],
     recommendationBase: 96,
   },
-  {
-    id: "seongsu-cafe-street",
+  "성수카페거리": {
     slug: "seongsu-cafe-street",
-    name: "성수카페거리",
-    apiAreaName: "성수카페거리",
     district: "성동구",
-    latitude: 37.5446,
-    longitude: 127.0557,
     summary: "신규 카페와 팝업이 밀집해 활기찬 데이트나 사진 중심 일정에 좋아요.",
     categories: ["date", "hotspot", "photo", "night"],
     tags: ["카페", "팝업", "사진"],
     searchKeywords: ["성수", "카페거리", "팝업스토어"],
     recommendationBase: 91,
   },
-  {
-    id: "hongdae",
+  "홍대 관광특구": {
     slug: "hongdae",
     name: "홍대",
-    apiAreaName: "홍대 관광특구",
     district: "마포구",
-    latitude: 37.5572,
-    longitude: 126.9245,
     summary: "공연, 쇼핑, 음식점이 늦은 시간까지 이어지는 대표적인 도심 핫플이에요.",
     categories: ["date", "hotspot", "night", "photo"],
     tags: ["공연", "쇼핑", "야간"],
     searchKeywords: ["홍대입구", "연남", "합정", "홍대 관광특구"],
     recommendationBase: 88,
   },
-  {
-    id: "gangnam-station",
+  "강남역": {
     slug: "gangnam-station",
-    name: "강남역",
-    apiAreaName: "강남역",
     district: "강남구",
-    latitude: 37.4979,
-    longitude: 127.0276,
     summary: "교통과 상권 접근성이 좋아 모임 장소로 편리하지만 퇴근 시간 혼잡을 확인해야 해요.",
     categories: ["date", "hotspot", "night"],
     tags: ["모임", "맛집", "교통"],
     searchKeywords: ["강남", "신논현", "역삼"],
     recommendationBase: 86,
   },
-  {
-    id: "jamsil-lake",
+  "잠실롯데타워·석촌호수": {
     slug: "jamsil-lake",
     name: "잠실·석촌호수",
-    apiAreaName: "잠실롯데타워·석촌호수",
     district: "송파구",
-    latitude: 37.5133,
-    longitude: 127.1001,
     summary: "호수 산책과 쇼핑을 한 번에 묶기 좋아 가족 나들이와 데이트 모두 무난해요.",
     categories: ["date", "walk", "family", "photo", "hotspot"],
     tags: ["호수", "쇼핑", "가족"],
     searchKeywords: ["잠실", "롯데타워", "석촌호수", "송리단길"],
     recommendationBase: 94,
   },
-  {
-    id: "gwanghwamun",
+  "광화문·덕수궁": {
     slug: "gwanghwamun",
-    name: "광화문·덕수궁",
-    apiAreaName: "광화문·덕수궁",
     district: "종로구",
-    latitude: 37.5724,
-    longitude: 126.9769,
     summary: "역사 공간과 넓은 보행 동선을 함께 즐길 수 있어 낮 산책과 문화 일정에 좋아요.",
     categories: ["date", "walk", "quiet", "photo", "family"],
     tags: ["궁궐", "산책", "전시"],
     searchKeywords: ["광화문", "덕수궁", "시청", "광화문광장"],
     recommendationBase: 95,
   },
-  {
-    id: "yeouido-hangang",
+  "여의도한강공원": {
     slug: "yeouido-hangang",
-    name: "여의도한강공원",
-    apiAreaName: "여의도한강공원",
     district: "영등포구",
-    latitude: 37.5284,
-    longitude: 126.9345,
     summary: "강변 피크닉과 노을 감상이 좋아 날씨 좋은 날의 데이트·나들이 후보예요.",
     categories: ["date", "walk", "quiet", "night", "photo", "family"],
     tags: ["한강", "피크닉", "노을"],
     searchKeywords: ["여의도", "한강공원", "여의나루"],
     recommendationBase: 97,
   },
-  {
-    id: "namsan-park",
+  "남산공원": {
     slug: "namsan-park",
-    name: "남산공원",
-    apiAreaName: "남산공원",
     district: "중구",
-    latitude: 37.5512,
-    longitude: 126.9882,
     summary: "도심 전망과 숲길이 함께 있어 조용한 산책이나 야경 데이트에 잘 맞아요.",
     categories: ["date", "walk", "quiet", "night", "photo"],
     tags: ["전망", "숲길", "야경"],
     searchKeywords: ["남산", "서울타워", "N서울타워", "야경"],
     recommendationBase: 96,
   },
-  {
-    id: "bukchon",
+  "북촌한옥마을": {
     slug: "bukchon",
-    name: "북촌한옥마을",
-    apiAreaName: "북촌한옥마을",
     district: "종로구",
-    latitude: 37.5826,
-    longitude: 126.983,
     summary: "한옥 골목과 전시 공간을 천천히 둘러보기 좋지만 보행 혼잡을 확인하는 편이 좋아요.",
     categories: ["date", "walk", "photo", "hotspot"],
     tags: ["한옥", "골목", "사진"],
     searchKeywords: ["북촌", "삼청동", "한옥마을"],
     recommendationBase: 91,
   },
-  {
-    id: "ikseon-dong",
+  "익선동": {
     slug: "ikseon-dong",
-    name: "익선동",
-    apiAreaName: "익선동",
     district: "종로구",
-    latitude: 37.5743,
-    longitude: 126.9897,
     summary: "작은 골목에 카페와 식당이 모여 있어 짧고 밀도 높은 도심 데이트에 좋아요.",
     categories: ["date", "hotspot", "photo", "night"],
     tags: ["골목", "카페", "데이트"],
     searchKeywords: ["익선동 한옥거리", "종로3가", "인사동"],
     recommendationBase: 92,
   },
-];
+};
 
-const bySlug = Object.fromEntries(PLACE_DEFINITIONS.map((item) => [item.slug, item]));
+const categoryMeta: Record<string, {
+  categories: PlaceCategory[];
+  tags: string[];
+  summary: string;
+  populationBase: number;
+}> = {
+  "공원": {
+    categories: ["walk", "quiet", "photo", "family", "date"],
+    tags: ["공원", "산책", "나들이"],
+    summary: "도심 속 산책과 휴식, 가족 나들이를 함께 즐기기 좋은 공간이에요.",
+    populationBase: 6500,
+  },
+  "고궁·문화유산": {
+    categories: ["walk", "quiet", "photo", "family", "date"],
+    tags: ["문화", "산책", "사진"],
+    summary: "서울의 역사와 문화를 천천히 둘러보며 사진을 남기기 좋은 장소예요.",
+    populationBase: 7600,
+  },
+  "발달상권": {
+    categories: ["hotspot", "date", "night", "photo"],
+    tags: ["상권", "맛집", "데이트"],
+    summary: "맛집과 쇼핑, 카페가 모여 있어 약속이나 도심 데이트에 편리한 지역이에요.",
+    populationBase: 12500,
+  },
+  "인구밀집지역": {
+    categories: ["hotspot", "night"],
+    tags: ["역세권", "교통", "상권"],
+    summary: "교통과 생활 상권이 밀집한 지역이라 시간대별 혼잡도를 확인하는 편이 좋아요.",
+    populationBase: 15500,
+  },
+  "관광특구": {
+    categories: ["hotspot", "date", "night", "photo", "family"],
+    tags: ["관광", "쇼핑", "사진"],
+    summary: "볼거리와 상권이 함께 모인 서울 대표 관광 지역이에요.",
+    populationBase: 18500,
+  },
+};
 
-export const MOCK_PLACES: Place[] = [
-  place(bySlug["seoul-forest"], {
-    level: "relaxed",
-    min: 8400,
-    max: 9600,
-    trend: "rising",
-    message: "산책 동선이 여유롭고, 저녁이 가까워지며 방문객이 천천히 늘고 있어요.",
-    forecast: forecast([
-      ["지금", 8400, 9600, "relaxed"], ["+1h", 9200, 10400, "normal"],
-      ["+2h", 10800, 12100, "normal"], ["+3h", 12600, 14100, "normal"],
-      ["+4h", 14200, 15800, "busy"], ["+5h", 13100, 14800, "normal"],
-    ]),
-  }),
-  place(bySlug["seongsu-cafe-street"], {
-    level: "busy",
-    min: 16000,
-    max: 18000,
-    trend: "rising",
-    message: "인기 카페와 팝업 주변은 대기가 생길 수 있어 골목 안쪽 동선을 함께 살펴보세요.",
-    forecast: forecast([
-      ["지금", 16000, 18000, "busy"], ["+1h", 17400, 19600, "busy"],
-      ["+2h", 19100, 21400, "veryBusy"], ["+3h", 20500, 23000, "veryBusy"],
-      ["+4h", 19300, 21800, "veryBusy"], ["+5h", 17100, 19600, "busy"],
-    ]),
-  }),
-  place(bySlug["hongdae"], {
-    level: "veryBusy",
-    min: 42000,
-    max: 45000,
-    trend: "stable",
-    message: "주요 거리와 역 주변이 붐비고 있어 조용한 일정을 원하면 다른 후보가 편해요.",
-    forecast: forecast([
-      ["지금", 42000, 45000, "veryBusy"], ["+1h", 43100, 46800, "veryBusy"],
-      ["+2h", 44500, 48200, "veryBusy"], ["+3h", 45200, 49100, "veryBusy"],
-      ["+4h", 43600, 47400, "veryBusy"], ["+5h", 40100, 43800, "veryBusy"],
-    ]),
-  }),
-  place(bySlug["gangnam-station"], {
-    level: "busy",
-    min: 36000,
-    max: 39000,
-    trend: "falling",
-    message: "역 출구 주변은 붐비지만 혼잡도가 조금씩 낮아지는 흐름이에요.",
-    forecast: forecast([
-      ["지금", 36000, 39000, "busy"], ["+1h", 33800, 37100, "busy"],
-      ["+2h", 31400, 34800, "busy"], ["+3h", 28900, 32200, "normal"],
-      ["+4h", 26700, 30100, "normal"], ["+5h", 23500, 27100, "normal"],
-    ]),
-  }),
-  place(bySlug["jamsil-lake"], {
-    level: "normal",
-    min: 25000,
-    max: 28000,
-    trend: "rising",
-    message: "호수 산책로는 무난하지만 쇼핑 시설과 행사 구역은 점차 붐빌 수 있어요.",
-    forecast: forecast([
-      ["지금", 25000, 28000, "normal"], ["+1h", 26800, 30200, "normal"],
-      ["+2h", 29100, 32600, "busy"], ["+3h", 31500, 35100, "busy"],
-      ["+4h", 32900, 36800, "busy"], ["+5h", 30300, 34200, "busy"],
-    ]),
-  }),
-  place(bySlug["gwanghwamun"], {
-    level: "normal",
-    min: 13000,
-    max: 15000,
-    trend: "falling",
-    message: "광장과 궁궐 주변의 이동이 비교적 원활해 산책과 문화 일정에 무난해요.",
-    forecast: forecast([
-      ["지금", 13000, 15000, "normal"], ["+1h", 12100, 14100, "normal"],
-      ["+2h", 10900, 12900, "normal"], ["+3h", 9800, 11600, "relaxed"],
-      ["+4h", 8600, 10400, "relaxed"], ["+5h", 7600, 9400, "relaxed"],
-    ]),
-  }),
-  place(bySlug["yeouido-hangang"], {
-    level: "relaxed",
-    min: 11000,
-    max: 13000,
-    trend: "rising",
-    message: "강변 공간이 넓어 체감 혼잡이 낮고 노을 시간대로 갈수록 사람이 늘 수 있어요.",
-    forecast: forecast([
-      ["지금", 11000, 13000, "relaxed"], ["+1h", 12500, 14800, "normal"],
-      ["+2h", 14700, 17200, "normal"], ["+3h", 16900, 19600, "busy"],
-      ["+4h", 18100, 21000, "busy"], ["+5h", 16500, 19300, "busy"],
-    ]),
-  }),
-  place(bySlug["namsan-park"], {
-    level: "relaxed",
-    min: 6500,
-    max: 7800,
-    trend: "stable",
-    message: "공원 산책로는 여유로운 편이며 전망 구간에서만 잠깐 대기할 수 있어요.",
-    forecast: forecast([
-      ["지금", 6500, 7800, "relaxed"], ["+1h", 6800, 8200, "relaxed"],
-      ["+2h", 7400, 8900, "relaxed"], ["+3h", 8300, 9800, "relaxed"],
-      ["+4h", 9100, 10800, "normal"], ["+5h", 8700, 10300, "normal"],
-    ]),
-  }),
-  place(bySlug["bukchon"], {
-    level: "busy",
-    min: 9800,
-    max: 11500,
-    trend: "falling",
-    message: "사진 명소 주변은 붐비지만 방문객이 줄어드는 흐름이라 조금 뒤가 더 편해요.",
-    forecast: forecast([
-      ["지금", 9800, 11500, "busy"], ["+1h", 9000, 10700, "normal"],
-      ["+2h", 8100, 9700, "normal"], ["+3h", 7200, 8600, "relaxed"],
-      ["+4h", 6300, 7600, "relaxed"], ["+5h", 5400, 6600, "relaxed"],
-    ]),
-  }),
-  place(bySlug["ikseon-dong"], {
-    level: "normal",
-    min: 7800,
-    max: 9300,
-    trend: "rising",
-    message: "골목은 활기 있는 수준이며 저녁 식사 시간 전부터 대기가 늘어날 수 있어요.",
-    forecast: forecast([
-      ["지금", 7800, 9300, "normal"], ["+1h", 8500, 10200, "normal"],
-      ["+2h", 9700, 11600, "busy"], ["+3h", 10800, 12800, "busy"],
-      ["+4h", 11200, 13300, "busy"], ["+5h", 10100, 12100, "busy"],
-    ]),
-  }),
-];
+function hashText(text: string): number {
+  let hash = 2166136261;
+  for (let index = 0; index < text.length; index += 1) {
+    hash ^= text.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return hash >>> 0;
+}
+
+function crowdLevel(level: string): CrowdLevel {
+  if (level === "붐빔") return "veryBusy";
+  if (level === "약간 붐빔") return "busy";
+  if (level === "보통") return "normal";
+  return "relaxed";
+}
+
+function crowdMessage(level: CrowdLevel): string {
+  if (level === "veryBusy") return "현재 방문객이 많아 이동과 대기 시간을 넉넉하게 잡는 편이 좋아요.";
+  if (level === "busy") return "주요 동선이 붐빌 수 있어 여유 있는 이동 계획이 필요해요.";
+  if (level === "normal") return "활기 있는 수준이며 대부분의 동선을 무난하게 이용할 수 있어요.";
+  return "현재 비교적 여유로워 편안하게 둘러보기 좋은 상태예요.";
+}
+
+function forecastFor(min: number, max: number, level: CrowdLevel, seed: number): ForecastPoint[] {
+  const multipliers = [1, 1.04, 1.09, 1.13, 1.08, 0.98];
+  return multipliers.map((multiplier, index) => {
+    const shifted = multiplier + (((seed >> (index % 8)) & 3) - 1) * 0.012;
+    const pointMin = Math.max(500, Math.round((min * shifted) / 100) * 100);
+    const pointMax = Math.max(pointMin + 500, Math.round((max * shifted) / 100) * 100);
+    return {
+      label: index === 0 ? "지금" : `+${index}h`,
+      min: pointMin,
+      max: pointMax,
+      level,
+    };
+  });
+}
+
+function genericDefinition(row: SeoulHotspotRow, index: number): PlaceDefinition {
+  const meta = categoryMeta[row.category] ?? categoryMeta["발달상권"];
+  const seed = hashText(row.area_nm);
+  const override = overrides[row.area_nm];
+  return {
+    id: override?.slug ?? `seoul-spot-${String(index + 1).padStart(3, "0")}`,
+    slug: override?.slug ?? `seoul-spot-${String(index + 1).padStart(3, "0")}`,
+    name: override?.name ?? row.area_nm,
+    apiAreaName: row.area_nm,
+    district: override?.district ?? "서울",
+    latitude: Number(row.x),
+    longitude: Number(row.y),
+    summary: override?.summary ?? meta.summary,
+    categories: override?.categories ?? meta.categories,
+    tags: override?.tags ?? meta.tags,
+    searchKeywords: override?.searchKeywords ?? [row.area_nm, row.category, "서울"],
+    recommendationBase: override?.recommendationBase ?? 78 + (seed % 17),
+  };
+}
+
+export const PLACE_DEFINITIONS: PlaceDefinition[] = (seoulHotspots as SeoulHotspotRow[]).map(genericDefinition);
+
+const definitionsByArea = new Map(PLACE_DEFINITIONS.map((definition) => [definition.apiAreaName, definition]));
+
+export const MOCK_PLACES: Place[] = (seoulHotspots as SeoulHotspotRow[]).map((row) => {
+  const definition = definitionsByArea.get(row.area_nm);
+  if (!definition) throw new Error(`Missing place definition for ${row.area_nm}`);
+  const seed = hashText(row.area_nm);
+  const level = crowdLevel(row.area_congest_lvl);
+  const meta = categoryMeta[row.category] ?? categoryMeta["발달상권"];
+  const factor = level === "veryBusy" ? 1.55 : level === "busy" ? 1.28 : level === "normal" ? 1.05 : 0.78;
+  const minPopulation = Math.max(
+    800,
+    Math.round(((meta.populationBase + (seed % 5200)) * factor) / 100) * 100,
+  );
+  const maxPopulation = minPopulation + 900 + (seed % 2300);
+  const trend: CrowdTrend = seed % 3 === 0 ? "rising" : seed % 3 === 1 ? "stable" : "falling";
+  return {
+    ...definition,
+    crowd: {
+      level,
+      minPopulation,
+      maxPopulation,
+      message: crowdMessage(level),
+      trend,
+      measuredAt: "공식 주요 장소 목록 기반 데모",
+      source: "mock",
+      forecast: forecastFor(minPopulation, maxPopulation, level, seed),
+    },
+  };
+});
 
 export function getMockPlace(slug: string): Place | undefined {
   return MOCK_PLACES.find((item) => item.slug === slug);

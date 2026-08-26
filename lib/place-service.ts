@@ -30,7 +30,7 @@ export async function getPlacesPayload(): Promise<PlacesPayload> {
   const cacheSeconds = integerEnv("SEOUL_API_CACHE_SECONDS", 900, 60, 86_400);
   const liveLimit = integerEnv(
     "SEOUL_LIVE_PLACE_LIMIT",
-    PLACE_DEFINITIONS.length,
+    Math.min(10, PLACE_DEFINITIONS.length),
     1,
     PLACE_DEFINITIONS.length,
   );
@@ -129,7 +129,7 @@ export async function getPlaceBySlug(
         mode: "mixed",
         updatedAt: new Date().toISOString(),
         places: [place],
-        notice: "실데이터 호출에 실패해 이 장소만 fallback 데이터로 표시합니다.",
+        notice: "실데이터 호출에 실패해 이 장소만 fallback 데이터로 톜시합니다.",
         liveCount: 0,
         fallbackCount: 1,
       },
