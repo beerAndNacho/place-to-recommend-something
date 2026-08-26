@@ -1,0 +1,28 @@
+{
+  "name": "place-to-recommend-something",
+  "version": "0.1.0",
+  "private": true,
+  "description": "서울 실시간 혼잡도와 목적 기반 추천을 결합한 장소 탐색 MVP",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "typecheck": "tsc --noEmit",
+    "verify": "npm run typecheck && npm run build"
+  },
+  "dependencies": {
+    "maplibre-gl": "6.5.0",
+    "next": "16.3.3",
+    "react": "19.2.8",
+    "react-dom": "19.2.8"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.0",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "typescript": "^5.9.0"
+  },
+  "engines": {
+    "node": ">=20.9.0"
+  }
+}
