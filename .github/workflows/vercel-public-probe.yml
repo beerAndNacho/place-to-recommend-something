@@ -15,26 +15,38 @@ jobs:
       - name: Verify public functional Vercel deployment
         shell: bash
         run: |
-          set -u
+          set -euo pipefail
           url="https://jigeum-eodi-seoul-now.vercel.app"
           for attempt in $(seq 1 24); do
             home_status=$(curl -L -sS --max-time 20 -o /tmp/home.html -w '%{http_code}' "$url" || true)
             health_status=$(curl -L -sS --max-time 20 -o /tmp/health.json -w '%{http_code}' "$url/api/health" || true)
-            title=$(grep -oi '<title[^>]*>[^<]*' /tmp/home.html | head -1 || true)
-            echo "attempt=$attempt home=$home_status health=$health_status title=$title"
+            echo "attempt=$attempt home=$home_status health=$health_status"
             if [[ "$home_status" == "200" && "$health_status" == "200" ]] \
               && grep -q '지금어디 로딩 중' /tmp/home.html \
               && grep -q 'static-functional-demo' /tmp/health.json \
               && ! grep -qi 'Login – Vercel' /tmp/home.html; then
-              echo "PUBLIC_FUNCTIONAL_URL_OK=$url"
-              cat /tmp/health.json
-              exit 0
+              break
             fi
             sleep 5
           done
-          echo '--- homepage ---'
-          head -c 500 /tmp/home.html || true
-          echo
-          echo '--- health ---'
-          cat /tmp/health.json || true
-          exit 1
+          [[ "$home_status" == "200" && "$health_status" == "200" ]]
+          python - <<'PY'
+          import base64, gzip, re
+          from pathlib import Path
+          loader = Path('/tmp/home.html').read_text(encoding='utf-8')
+          match = re.search(r"const b='([^']+)'", loader)
+          assert match, 'embedded application payload missing'
+          app = gzip.decompress(base64.b64decode(match.group(1))).decode('utf-8')
+          required = [
+              'JIGEUM_EODI_FUNCTIONAL_DEMO',
+              '서울숲',
+              'initMap',
+              'geolocation',
+              '혼잡도',
+          ]
+          missing = [item for item in required if item not in app]
+          assert not missing, f'missing markers: {missing}'
+          print(f'PUBLIC_FUNCTIONAL_URL_OK=https://jigeum-eodi-seoul-now.vercel.app')
+          print(f'DECOMPRESSED_APP_BYTES={len(app.encode("utf-8"))}')
+          PY
+          cat /tmp/health.json
