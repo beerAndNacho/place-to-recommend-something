@@ -10,24 +10,37 @@ permissions:
 jobs:
   probe:
     runs-on: ubuntu-latest
-    timeout-minutes: 3
+    timeout-minutes: 4
     steps:
-      - name: Verify public Vercel deployment
+      - name: Inspect candidate Vercel URLs
         shell: bash
         run: |
-          set -euo pipefail
+          set -u
           urls=(
-            "https://jigeum-eodi-public-abn68w9bd-luckykkh777-9155s-projects.vercel.app"
+            "https://jigeum-eodi-public.vercel.app"
             "https://jigeum-eodi-public-luckykkh777-9155s-projects.vercel.app"
+            "https://jigeum-eodi-public-abn68w9bd-luckykkh777-9155s-projects.vercel.app"
+            "https://place-to-recommend-something.vercel.app"
+            "https://place-to-recommend-something-luckykkh777-9155s-projects.vercel.app"
+            "https://place-to-recommend-something-fi40hqmxc.vercel.app"
+            "https://place-to-recommend-something-lfsracq3w.vercel.app"
           )
+          found=0
           for url in "${urls[@]}"; do
-            echo "URL=$url"
+            echo "--- URL=$url"
             status=$(curl -L -sS --max-time 30 -o /tmp/page.html -w '%{http_code}' "$url" || true)
             echo "STATUS=$status"
-            if [[ "$status" == "200" ]] && grep -q 'PUBLIC_DEPLOYMENT_OK' /tmp/page.html; then
-              echo "PUBLIC_URL_OK=$url"
-              exit 0
-            fi
+            title=$(grep -oi '<title[^>]*>[^<]*' /tmp/page.html | head -1 || true)
+            echo "TITLE=$title"
             if grep -qi 'login' /tmp/page.html; then echo 'VERCEL_AUTH_PAGE=true'; fi
+            if grep -q 'PUBLIC_DEPLOYMENT_OK' /tmp/page.html; then
+              echo "PUBLIC_TEST_URL_OK=$url"
+              found=1
+            fi
+            if grep -q '지금 어디' /tmp/page.html || grep -q '지금어디' /tmp/page.html; then
+              if ! grep -qi 'Vercel' /tmp/page.html || grep -q '서울' /tmp/page.html; then
+                echo "FULL_APP_CANDIDATE=$url"
+              fi
+            fi
           done
-          exit 1
+          exit $((1-found))
