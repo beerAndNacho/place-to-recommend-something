@@ -5,9 +5,10 @@ import Link from "next/link";
 import { CompassIcon, RefreshIcon, SearchIcon } from "@/components/icons";
 import { CrowdMap } from "@/components/CrowdMap";
 import { CROWD_META, formatPopulationRange } from "@/lib/crowd";
+import seoulHotspots from "@/data/seoul-hotspots.json";
 import { haversineDistanceKm } from "@/lib/geo";
 import { scorePlace, type RecommendationIntent } from "@/lib/recommendation";
-import type { CrowdLevel, Place, PlaceCategory, PlacesPayload, RankedPlace } from "@/types/place";
+import type { CrowdLevel, Place, PlacesPayload, RankedPlace } from "@/types/place";
 
 const crowdLevels: CrowdLevel[] = ["relaxed", "normal", "busy", "veryBusy"];
 const crowdRank: Record<CrowdLevel, number> = {
@@ -21,25 +22,33 @@ const presets: Array<{ value: RecommendationIntent; label: string; icon: string 
   { value: "family", label: "아이와 나들이", icon: "🧒" },
   { value: "date", label: "데이트", icon: "💐" },
   { value: "hotspot", label: "지금 핫플", icon: "🔥" },
-  { value: "quiet", label: "한적한 곳", icon: "☁" },
 ];
 
-const categories: Array<{ value: "all" | PlaceCategory; label: string }> = [
+type OfficialAreaCategory = "발달상권" | "인구밀집지역" | "관광특구" | "공원" | "고궁·문화유산";
+
+type SeoulHotspotCategoryRow = {
+  area_nm: string;
+  category: OfficialAreaCategory;
+};
+
+const officialCategoryByArea = new Map(
+  (seoulHotspots as SeoulHotspotCategoryRow[]).map((row) => [row.area_nm, row.category]),
+);
+
+const categories: Array<{ value: "all" | OfficialAreaCategory; label: string }> = [
   { value: "all", label: "전체" },
-  { value: "walk", label: "공원·산책" },
-  { value: "hotspot", label: "상권·핫플" },
-  { value: "photo", label: "문화·사진" },
-  { value: "night", label: "야간" },
-  { value: "family", label: "가족" },
+  { value: "발달상권", label: "발달상권" },
+  { value: "인구밀집지역", label: "인구밀집지역" },
+  { value: "관광특구", label: "관광특구" },
+  { value: "공원", label: "공원" },
+  { value: "고궁·문화유산", label: "고궁·문화유산" },
 ];
 
 type SortOption = "busy" | "relaxed" | "name" | "distance";
 
-function placeType(place: Place): string {
-  if (place.categories.includes("walk") || place.categories.includes("quiet")) return "공원·산책";
-  if (place.categories.includes("hotspot")) return "발달상권";
-  if (place.categories.includes("photo")) return "문화·관광";
-  return "인구밀집지역";
+function placeType(place: Place): OfficialAreaCategory {
+  return officialCategoryByArea.get(place.apiAreaName)
+    ?? (place.categories.includes("walk") ? "공원" : "발달상권");
 }
 
 function formatClock(value?: string): string {
@@ -59,7 +68,7 @@ export function PlaceExplorer({ initialPlaces }: { initialPlaces: Place[] }) {
   const [updatedAt, setUpdatedAt] = useState<string>();
   const [query, setQuery] = useState("");
   const [intent, setIntent] = useState<RecommendationIntent>("all");
-  const [category, setCategory] = useState<"all" | PlaceCategory>("all");
+  const [category, setCategory] = useState<"all" | OfficialAreaCategory>("all");
   const [levels, setLevels] = useState<Set<CrowdLevel>>(new Set());
   const [sort, setSort] = useState<SortOption>("busy");
   const [selectedSlug, setSelectedSlug] = useState<string>();
@@ -123,7 +132,7 @@ export function PlaceExplorer({ initialPlaces }: { initialPlaces: Place[] }) {
       })
       .filter((place) => {
         if (intent !== "all" && !place.categories.includes(intent)) return false;
-        if (category !== "all" && !place.categories.includes(category)) return false;
+        if (category !== "all" && placeType(place) !== category) return false;
         if (levels.size > 0 && !levels.has(place.crowd.level)) return false;
         if (!normalizedQuery) return true;
         const haystack = [
@@ -316,12 +325,9 @@ export function PlaceExplorer({ initialPlaces }: { initialPlaces: Place[] }) {
                       <strong>{place.name}</strong>
                       <small>
                         {placeType(place)}
-                        <span>·</span>
-                        {place.district}
                         {place.distanceKm != null && <><span>·</span>{place.distanceKm.toFixed(1)}km</>}
                       </small>
                     </span>
-                    <span className="radar-row__population">{formatPopulationRange(place.crowd.minPopulation, place.crowd.maxPopulation)}</span>
                     <span className={`radar-badge radar-badge--${place.crowd.level}`}>
                       {CROWD_META[place.crowd.level].shortLabel}
                     </span>
