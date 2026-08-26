@@ -10,37 +10,30 @@ permissions:
 jobs:
   probe:
     runs-on: ubuntu-latest
-    timeout-minutes: 4
+    timeout-minutes: 5
     steps:
-      - name: Inspect candidate Vercel URLs
+      - name: Verify full public Vercel app
         shell: bash
         run: |
           set -u
-          urls=(
-            "https://jigeum-eodi-public.vercel.app"
-            "https://jigeum-eodi-public-luckykkh777-9155s-projects.vercel.app"
-            "https://jigeum-eodi-public-abn68w9bd-luckykkh777-9155s-projects.vercel.app"
-            "https://place-to-recommend-something.vercel.app"
-            "https://place-to-recommend-something-luckykkh777-9155s-projects.vercel.app"
-            "https://place-to-recommend-something-fi40hqmxc.vercel.app"
-            "https://place-to-recommend-something-lfsracq3w.vercel.app"
-          )
-          found=0
-          for url in "${urls[@]}"; do
-            echo "--- URL=$url"
-            status=$(curl -L -sS --max-time 30 -o /tmp/page.html -w '%{http_code}' "$url" || true)
-            echo "STATUS=$status"
-            title=$(grep -oi '<title[^>]*>[^<]*' /tmp/page.html | head -1 || true)
-            echo "TITLE=$title"
-            if grep -qi 'login' /tmp/page.html; then echo 'VERCEL_AUTH_PAGE=true'; fi
-            if grep -q 'PUBLIC_DEPLOYMENT_OK' /tmp/page.html; then
-              echo "PUBLIC_TEST_URL_OK=$url"
-              found=1
+          url="https://jigeum-eodi-seoul.vercel.app"
+          for attempt in $(seq 1 30); do
+            home_status=$(curl -L -sS --max-time 25 -o /tmp/home.html -w '%{http_code}' "$url" || true)
+            health_status=$(curl -L -sS --max-time 25 -o /tmp/health.json -w '%{http_code}' "$url/api/health" || true)
+            title=$(grep -oi '<title[^>]*>[^<]*' /tmp/home.html | head -1 || true)
+            echo "attempt=$attempt home=$home_status health=$health_status title=$title"
+            if [[ "$home_status" == "200" && "$health_status" == "200" ]] \
+              && grep -Eq '지금어디|지금 어디' /tmp/home.html \
+              && grep -qi 'mock' /tmp/health.json \
+              && ! grep -qi 'Login – Vercel' /tmp/home.html; then
+              echo "PUBLIC_FULL_APP_OK=$url"
+              cat /tmp/health.json
+              exit 0
             fi
-            if grep -q '지금 어디' /tmp/page.html || grep -q '지금어디' /tmp/page.html; then
-              if ! grep -qi 'Vercel' /tmp/page.html || grep -q '서울' /tmp/page.html; then
-                echo "FULL_APP_CANDIDATE=$url"
-              fi
-            fi
+            sleep 5
           done
-          exit $((1-found))
+          echo '--- final homepage title/body marker ---'
+          grep -oi '<title[^>]*>[^<]*' /tmp/home.html | head -1 || true
+          echo '--- final health response ---'
+          cat /tmp/health.json || true
+          exit 1
