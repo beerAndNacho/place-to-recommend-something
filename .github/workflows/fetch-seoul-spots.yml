@@ -1,26 +1,30 @@
-name: Fetch Seoul hotspot metadata
+name: Apply full Seoul hotspot dashboard
 
 on:
   push:
     branches: [main]
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  fetch:
+  apply:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 12
     steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-      - name: Fetch official hotspot pages
+          cache: npm
+      - name: Fetch official Seoul hotspot snapshot
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p out
           cat > /tmp/fetch.mjs <<'EOF'
+          import { writeFile } from 'node:fs/promises';
           const base = 'https://data.seoul.go.kr/SeoulRtd/api/hotspot-category';
           const headers = {
             'User-Agent': 'Mozilla/5.0 (compatible; SeoulCrowdRadarMetadata/1.0)',
@@ -41,14 +45,203 @@ jobs:
             all.push(...payload.row);
           }
           const unique = [...new Map(all.filter((row) => row.area_nm).map((row) => [row.area_nm, row])).values()];
-          if (unique.length < 100) throw new Error(`only ${unique.length} unique hotspots returned`);
-          await import('node:fs/promises').then(({ writeFile }) => writeFile('out/seoul-hotspots.json', JSON.stringify(unique, null, 2)));
+          if (unique.length !== 121) throw new Error(`expected 121 hotspots, got ${unique.length}`);
+          await writeFile('data/seoul-hotspots.json', `${JSON.stringify(unique, null, 2)}\n`);
           console.log(`HOTSPOT_COUNT=${unique.length}`);
-          console.log(JSON.stringify(unique.slice(0, 3), null, 2));
           EOF
-          node /tmp/fetch.mjs | tee out/fetch-log.txt
-      - uses: actions/upload-artifact@v4
-        with:
-          name: seoul-hotspot-metadata
-          path: out
-          if-no-files-found: error
+          node /tmp/fetch.mjs
+      - name: Extend the app to all 121 places
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+
+          places = Path('data/places.ts')
+          source = places.read_text(encoding='utf-8')
+          if 'FULL_SEOUL_HOTSPOT_EXTENSION' not in source:
+              source = source.replace(
+                  'import type {\n',
+                  'import seoulHotspots from "@/data/seoul-hotspots.json";\nimport type {\n',
+                  1,
+              )
+              source = source.replace(
+                  'export const PLACE_DEFINITIONS: PlaceDefinition[] = [',
+                  'const CORE_PLACE_DEFINITIONS: PlaceDefinition[] = [',
+                  1,
+              )
+              source = source.replace(
+                  'const bySlug = Object.fromEntries(PLACE_DEFINITIONS.map((item) => [item.slug, item]));',
+                  'const bySlug = Object.fromEntries(CORE_PLACE_DEFINITIONS.map((item) => [item.slug, item]));',
+                  1,
+              )
+              source = source.replace(
+                  'export const MOCK_PLACES: Place[] = [',
+                  'const CORE_MOCK_PLACES: Place[] = [',
+                  1,
+              )
+              marker = '\nexport function getMockPlace(slug: string): Place | undefined {'
+              extension = r'''
+
+// FULL_SEOUL_HOTSPOT_EXTENSION
+interface SeoulHotspotRow {
+  area_nm: string;
+  congestion_color: string;
+  x: string;
+  y: string;
+  area_congest_lvl: string;
+  category: string;
+  area_congest_num: number;
+}
+
+const hotspotRows = seoulHotspots as SeoulHotspotRow[];
+const coreAreaNames = new Set(CORE_PLACE_DEFINITIONS.map((item) => item.apiAreaName));
+const extraRows = hotspotRows.filter((row) => !coreAreaNames.has(row.area_nm));
+
+function stableHash(value: string): number {
+  let hash = 2166136261;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return hash >>> 0;
+}
+
+function categoriesFor(category: string): PlaceDefinition["categories"] {
+  if (category === "공원") return ["walk", "quiet", "photo", "family", "date"];
+  if (category === "고궁·문화유산") return ["walk", "quiet", "photo", "family", "date"];
+  if (category === "관광특구") return ["hotspot", "date", "night", "photo", "family"];
+  if (category === "인구밀집지역") return ["hotspot", "night"];
+  return ["hotspot", "date", "night", "photo"];
+}
+
+function summaryFor(category: string): string {
+  if (category === "공원") return "산책과 휴식, 가족 나들이를 함께 즐기기 좋은 서울의 공원이에요.";
+  if (category === "고궁·문화유산") return "서울의 역사와 문화를 천천히 둘러보며 사진을 남기기 좋은 장소예요.";
+  if (category === "인구밀집지역") return "교통과 생활 상권이 밀집해 시간대별 혼잡도를 확인하는 편이 좋아요.";
+  if (category === "관광특구") return "볼거리와 상권이 함께 모인 서울 대표 관광 지역이에요.";
+  return "맛집과 쇼핑, 카페가 모여 있어 약속이나 도심 데이트에 편리한 지역이에요.";
+}
+
+function levelFromKorean(level: string): CrowdLevel {
+  if (level === "붐빔") return "veryBusy";
+  if (level === "약간 붐빔") return "busy";
+  if (level === "보통") return "normal";
+  return "relaxed";
+}
+
+function messageFor(level: CrowdLevel): string {
+  if (level === "veryBusy") return "현재 방문객이 많아 이동과 대기 시간을 넉넉하게 잡는 편이 좋아요.";
+  if (level === "busy") return "주요 동선이 붐빌 수 있어 여유 있는 이동 계획이 필요해요.";
+  if (level === "normal") return "활기 있는 수준이며 대부분의 동선을 무난하게 이용할 수 있어요.";
+  return "현재 비교적 여유로워 편안하게 둘러보기 좋은 상태예요.";
+}
+
+const EXTRA_PLACE_DEFINITIONS: PlaceDefinition[] = extraRows.map((row, index) => {
+  const seed = stableHash(row.area_nm);
+  const slug = `seoul-spot-${String(index + 1).padStart(3, "0")}`;
+  return {
+    id: slug,
+    slug,
+    name: row.area_nm,
+    apiAreaName: row.area_nm,
+    district: "서울",
+    latitude: Number(row.x),
+    longitude: Number(row.y),
+    summary: summaryFor(row.category),
+    categories: categoriesFor(row.category),
+    tags: [row.category, "서울", "혼잡도"],
+    searchKeywords: [row.area_nm, row.category, "서울"],
+    recommendationBase: 78 + (seed % 17),
+  };
+});
+
+export const PLACE_DEFINITIONS: PlaceDefinition[] = [
+  ...CORE_PLACE_DEFINITIONS,
+  ...EXTRA_PLACE_DEFINITIONS,
+];
+
+const extraDefinitionByArea = new Map(
+  EXTRA_PLACE_DEFINITIONS.map((definition) => [definition.apiAreaName, definition]),
+);
+
+const EXTRA_MOCK_PLACES: Place[] = extraRows.map((row) => {
+  const definition = extraDefinitionByArea.get(row.area_nm);
+  if (!definition) throw new Error(`Missing definition for ${row.area_nm}`);
+  const seed = stableHash(row.area_nm);
+  const level = levelFromKorean(row.area_congest_lvl);
+  const categoryBase = row.category === "인구밀집지역" ? 15500 : row.category === "관광특구" ? 18500 : row.category === "발달상권" ? 12500 : row.category === "고궁·문화유산" ? 7600 : 6500;
+  const factor = level === "veryBusy" ? 1.55 : level === "busy" ? 1.28 : level === "normal" ? 1.05 : 0.78;
+  const minPopulation = Math.max(800, Math.round(((categoryBase + (seed % 5200)) * factor) / 100) * 100);
+  const maxPopulation = minPopulation + 900 + (seed % 2300);
+  const trend: CrowdTrend = seed % 3 === 0 ? "rising" : seed % 3 === 1 ? "stable" : "falling";
+  const forecastPoints: ForecastPoint[] = [1, 1.04, 1.09, 1.13, 1.08, 0.98].map((multiplier, index) => ({
+    label: index === 0 ? "지금" : `+${index}h`,
+    min: Math.round((minPopulation * multiplier) / 100) * 100,
+    max: Math.round((maxPopulation * multiplier) / 100) * 100,
+    level,
+  }));
+  return {
+    ...definition,
+    crowd: {
+      level,
+      minPopulation,
+      maxPopulation,
+      message: messageFor(level),
+      trend,
+      measuredAt: "공식 주요 장소 목록 기반 데모",
+      source: "mock",
+      forecast: forecastPoints,
+    },
+  };
+});
+
+export const MOCK_PLACES: Place[] = [...CORE_MOCK_PLACES, ...EXTRA_MOCK_PLACES];
+'''
+              if marker not in source:
+                  raise SystemExit('getMockPlace marker not found')
+              source = source.replace(marker, extension + marker, 1)
+              places.write_text(source, encoding='utf-8')
+
+          explorer = Path('components/PlaceExplorer.tsx')
+          source = explorer.read_text(encoding='utf-8')
+          source = source.replace(
+              '''                      <small>\n                        {placeType(place)}\n                        <span>·</span>\n                        {place.district}\n                        {place.distanceKm != null && <><span>·</span>{place.distanceKm.toFixed(1)}km</>}\n                      </small>''',
+              '''                      <small>\n                        {placeType(place)}\n                        {place.distanceKm != null && <><span>·</span>{place.distanceKm.toFixed(1)}km</>}\n                      </small>''',
+          )
+          source = source.replace(
+              '                    <span className="radar-row__population">{formatPopulationRange(place.crowd.minPopulation, place.crowd.maxPopulation)}</span>\n',
+              '',
+          )
+          explorer.write_text(source, encoding='utf-8')
+
+          crowd_map = Path('components/CrowdMap.tsx')
+          source = crowd_map.read_text(encoding='utf-8')
+          source = source.replace('https://a.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png', 'https://a.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png')
+          source = source.replace('https://b.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png', 'https://b.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png')
+          crowd_map.write_text(source, encoding='utf-8')
+
+          css = Path('app/radar.css')
+          source = css.read_text(encoding='utf-8')
+          if 'Reference-density refinements' not in source:
+              source += '''\n/* Reference-density refinements */\n.radar-brand strong{font-family:"Noto Serif KR","Nanum Myeongjo",serif;font-weight:800;letter-spacing:-.05em}\n.radar-row__main{grid-template-columns:27px minmax(0,1fr) auto}\n.radar-marker{filter:drop-shadow(0 1px 2px #14202e26)}\n.radar-marker__dot{width:13px;height:13px;border-width:1.5px}\n.radar-marker__label{max-width:128px;margin-left:3px;padding:2px 6px;border-color:#7f88952f;border-radius:4px;background:#ffffffeb;color:#354154;font-size:7px;font-weight:600}\n'''
+              css.write_text(source, encoding='utf-8')
+          PY
+      - name: Verify production build
+        run: |
+          npm ci
+          npm run typecheck
+          npm run build
+      - name: Commit generated dashboard data
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/seoul-hotspots.json data/places.ts components/PlaceExplorer.tsx components/CrowdMap.tsx app/radar.css
+          if git diff --cached --quiet; then
+            echo "No source changes"
+            exit 0
+          fi
+          git commit -m "feat: match reference density with all 121 Seoul hotspots"
+          git push origin HEAD:main
