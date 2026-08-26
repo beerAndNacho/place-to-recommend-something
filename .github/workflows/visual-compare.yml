@@ -28,17 +28,30 @@ jobs:
           cat > capture.mjs <<'EOF'
           import { chromium } from 'playwright';
           import path from 'node:path';
+          import { writeFile } from 'node:fs/promises';
 
+          const currentUrl = 'https://seoul-crowd-radar-v2.vercel.app';
           const targets = [
             { name: 'reference', url: 'https://gjdong.vercel.app/crowd' },
-            { name: 'current', url: 'https://seoul-crowd-radar.vercel.app' },
+            { name: 'current', url: currentUrl },
           ];
           const sizes = [
             { name: 'desktop', width: 1440, height: 1000 },
             { name: 'mobile', width: 390, height: 844 },
           ];
 
+          async function loadWithRetry(page, url) {
+            let response;
+            for (let attempt = 1; attempt <= 30; attempt += 1) {
+              response = await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => undefined);
+              if (response?.status() === 200 && !page.url().includes('/login')) return response;
+              await page.waitForTimeout(5000);
+            }
+            return response;
+          }
+
           const browser = await chromium.launch({ headless: true });
+          const records = [];
           for (const size of sizes) {
             const context = await browser.newContext({
               viewport: { width: size.width, height: size.height },
@@ -47,12 +60,7 @@ jobs:
             });
             const page = await context.newPage();
             for (const target of targets) {
-              let response;
-              for (let attempt = 1; attempt <= 12; attempt += 1) {
-                response = await page.goto(target.url, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => undefined);
-                if (response?.status() === 200) break;
-                await page.waitForTimeout(5000);
-              }
+              const response = await loadWithRetry(page, target.url);
               await page.waitForTimeout(10000);
               await page.screenshot({
                 path: path.join('visual-captures', `${target.name}-${size.name}.png`),
@@ -60,13 +68,29 @@ jobs:
               });
               const bodyText = await page.locator('body').innerText().catch(() => '');
               const title = await page.title().catch(() => '');
-              console.log(JSON.stringify({ target: target.name, size: size.name, status: response?.status(), title, body: bodyText.slice(0, 2500) }));
-              if (target.name === 'current' && response?.status() !== 200) {
-                throw new Error(`redesigned deployment returned ${response?.status()}`);
+              const record = { target: target.name, size: size.name, status: response?.status(), title, body: bodyText.slice(0, 3000) };
+              records.push(record);
+              console.log(JSON.stringify(record));
+              if (target.name === 'current') {
+                if (response?.status() !== 200) throw new Error(`redesigned deployment returned ${response?.status()}`);
+                if (!bodyText.includes('서울 인파레이더')) throw new Error('dashboard title missing');
+                if (!bodyText.includes('장소')) throw new Error('place count label missing');
               }
             }
             await context.close();
           }
+
+          const apiContext = await browser.newContext();
+          const apiPage = await apiContext.newPage();
+          const apiResponse = await loadWithRetry(apiPage, `${currentUrl}/api/places`);
+          const payload = JSON.parse(await apiPage.locator('body').innerText());
+          if (apiResponse?.status() !== 200) throw new Error(`places API returned ${apiResponse?.status()}`);
+          if (!Array.isArray(payload.places) || payload.places.length !== 121) {
+            throw new Error(`expected 121 places, got ${payload.places?.length}`);
+          }
+          console.log(`VERIFIED_PLACE_COUNT=${payload.places.length}`);
+          await writeFile('visual-captures/capture-log.json', JSON.stringify({ records, placeCount: payload.places.length }, null, 2));
+          await apiContext.close();
           await browser.close();
           EOF
           node capture.mjs | tee visual-captures/capture-log.txt
