@@ -8,14 +8,27 @@ import type { RankedPlace } from "@/types/place";
 
 const SEOUL_CENTER: [number, number] = [126.978, 37.5665];
 
+type MarkerEntry = {
+  marker: Marker;
+  element: HTMLButtonElement;
+  place: RankedPlace;
+};
+
+type LabelBox = {
+  left: number;
+  right: number;
+  top: number;
+  bottom: number;
+};
+
 const style: StyleSpecification = {
   version: 8,
   sources: {
     carto: {
       type: "raster",
       tiles: [
-        "https://a.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png",
-        "https://b.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png",
+        "https://a.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png",
+        "https://b.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png",
       ],
       tileSize: 256,
       attribution: "© OpenStreetMap contributors © CARTO",
@@ -23,6 +36,72 @@ const style: StyleSpecification = {
   },
   layers: [{ id: "carto", type: "raster", source: "carto" }],
 };
+
+function intersects(first: LabelBox, second: LabelBox, gap = 4): boolean {
+  return !(
+    first.right + gap < second.left
+    || first.left - gap > second.right
+    || first.bottom + gap < second.top
+    || first.top - gap > second.bottom
+  );
+}
+
+function updateMarkerLabels(
+  map: MapLibreMap,
+  entries: MarkerEntry[],
+  showLabels: boolean,
+  selectedSlug?: string,
+): void {
+  const container = map.getContainer();
+  const viewportWidth = container.clientWidth;
+  const viewportHeight = container.clientHeight;
+  const mobile = viewportWidth <= 760;
+  const maxLabels = mobile ? 18 : viewportWidth < 900 ? 42 : 64;
+  const accepted: LabelBox[] = [];
+  let visibleCount = 0;
+
+  const candidates = [...entries].sort((first, second) => {
+    const firstSelected = first.place.slug === selectedSlug ? 1 : 0;
+    const secondSelected = second.place.slug === selectedSlug ? 1 : 0;
+    return secondSelected - firstSelected;
+  });
+
+  candidates.forEach(({ element, place }) => {
+    const selected = place.slug === selectedSlug;
+    element.classList.toggle("is-selected", selected);
+
+    if (!showLabels && !selected) {
+      element.classList.remove("has-label");
+      return;
+    }
+
+    const point = map.project([place.longitude, place.latitude]);
+    const characterCount = Array.from(place.name).length;
+    const labelWidth = Math.min(
+      mobile ? 124 : 154,
+      Math.max(48, 22 + characterCount * (mobile ? 6 : 6.5)),
+    );
+    const box: LabelBox = {
+      left: point.x + 10,
+      right: point.x + 10 + labelWidth,
+      top: point.y - 11,
+      bottom: point.y + 11,
+    };
+    const outside = box.right < 0
+      || box.left > viewportWidth
+      || box.bottom < 0
+      || box.top > viewportHeight;
+    const collides = accepted.some((acceptedBox) => intersects(box, acceptedBox));
+    const shouldShow = selected
+      || (!outside && visibleCount < maxLabels && !collides);
+
+    element.classList.toggle("has-label", shouldShow);
+    if (shouldShow) {
+      accepted.push(box);
+      visibleCount += 1;
+    }
+  });
+}
 
 export function CrowdMap({
   places,
@@ -39,7 +118,7 @@ export function CrowdMap({
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
-  const markersRef = useRef<Marker[]>([]);
+  const markersRef = useRef<MarkerEntry[]>([]);
   const hasFitRef = useRef(false);
 
   useEffect(() => {
@@ -62,7 +141,7 @@ export function CrowdMap({
     mapRef.current = map;
 
     return () => {
-      markersRef.current.forEach((marker) => marker.remove());
+      markersRef.current.forEach(({ marker }) => marker.remove());
       markersRef.current = [];
       map.remove();
       mapRef.current = null;
@@ -73,30 +152,41 @@ export function CrowdMap({
     const map = mapRef.current;
     if (!map) return;
 
-    markersRef.current.forEach((marker) => marker.remove());
+    markersRef.current.forEach(({ marker }) => marker.remove());
     markersRef.current = [];
 
-    places.forEach((place) => {
+    const entries = places.map((place) => {
       const element = document.createElement("button");
       element.type = "button";
       element.className = [
         "radar-marker",
         `radar-marker--${place.crowd.level}`,
-        selectedSlug === place.slug ? "is-selected" : "",
-        showLabels || selectedSlug === place.slug ? "has-label" : "",
-      ].filter(Boolean).join(" ");
+      ].join(" ");
       element.setAttribute(
         "aria-label",
         `${place.name}, ${CROWD_META[place.crowd.level].label}, ${formatPopulationRange(place.crowd.minPopulation, place.crowd.maxPopulation)}`,
       );
-      element.innerHTML = `<span class="radar-marker__dot"></span><span class="radar-marker__label">${place.name}</span>`;
+
+      const dot = document.createElement("span");
+      dot.className = "radar-marker__dot";
+      const label = document.createElement("span");
+      label.className = "radar-marker__label";
+      label.textContent = place.name;
+      element.append(dot, label);
       element.addEventListener("click", () => onSelect?.(place.slug));
 
-      const marker = new maplibregl.Marker({ element, anchor: "center" })
+      const marker = new maplibregl.Marker({
+        element,
+        anchor: "left",
+        offset: [-7, 0],
+      })
         .setLngLat([place.longitude, place.latitude])
         .addTo(map);
-      markersRef.current.push(marker);
+
+      return { marker, element, place } satisfies MarkerEntry;
     });
+
+    markersRef.current = entries;
 
     if (!hasFitRef.current && places.length > 1) {
       const longitudes = places.map((place) => place.longitude);
@@ -105,13 +195,31 @@ export function CrowdMap({
         [Math.min(...longitudes), Math.min(...latitudes)],
         [Math.max(...longitudes), Math.max(...latitudes)],
       ];
+      const mobile = map.getContainer().clientWidth <= 760;
       map.fitBounds(bounds, {
-        padding: compact ? 36 : 70,
-        maxZoom: compact ? 13 : 12.3,
+        padding: mobile ? 22 : compact ? 36 : 70,
+        maxZoom: mobile ? 11.2 : compact ? 13 : 12.3,
         duration: 0,
       });
       hasFitRef.current = true;
     }
+
+    const refreshLabels = () => updateMarkerLabels(map, entries, showLabels, selectedSlug);
+    const frame = window.requestAnimationFrame(refreshLabels);
+    map.once("idle", refreshLabels);
+    map.on("moveend", refreshLabels);
+    map.on("zoomend", refreshLabels);
+    map.on("resize", refreshLabels);
+
+    return () => {
+      window.cancelAnimationFrame(frame);
+      map.off("idle", refreshLabels);
+      map.off("moveend", refreshLabels);
+      map.off("zoomend", refreshLabels);
+      map.off("resize", refreshLabels);
+      entries.forEach(({ marker }) => marker.remove());
+      if (markersRef.current === entries) markersRef.current = [];
+    };
   }, [compact, onSelect, places, selectedSlug, showLabels]);
 
   useEffect(() => {
