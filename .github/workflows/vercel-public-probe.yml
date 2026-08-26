@@ -1,0 +1,33 @@
+name: Vercel public URL probe
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Verify public Vercel deployment
+        shell: bash
+        run: |
+          set -euo pipefail
+          urls=(
+            "https://jigeum-eodi-public-abn68w9bd-luckykkh777-9155s-projects.vercel.app"
+            "https://jigeum-eodi-public-luckykkh777-9155s-projects.vercel.app"
+          )
+          for url in "${urls[@]}"; do
+            echo "URL=$url"
+            status=$(curl -L -sS --max-time 30 -o /tmp/page.html -w '%{http_code}' "$url" || true)
+            echo "STATUS=$status"
+            if [[ "$status" == "200" ]] && grep -q 'PUBLIC_DEPLOYMENT_OK' /tmp/page.html; then
+              echo "PUBLIC_URL_OK=$url"
+              exit 0
+            fi
+            if grep -qi 'login' /tmp/page.html; then echo 'VERCEL_AUTH_PAGE=true'; fi
+          done
+          exit 1
