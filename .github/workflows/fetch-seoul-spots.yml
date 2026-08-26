@@ -1,0 +1,54 @@
+name: Fetch Seoul hotspot metadata
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Fetch official hotspot pages
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          cat > /tmp/fetch.mjs <<'EOF'
+          const base = 'https://data.seoul.go.kr/SeoulRtd/api/hotspot-category';
+          const headers = {
+            'User-Agent': 'Mozilla/5.0 (compatible; SeoulCrowdRadarMetadata/1.0)',
+            Referer: 'https://data.seoul.go.kr/SeoulRtd/map',
+            Accept: 'application/json, text/plain, */*',
+          };
+          const all = [];
+          for (const page of [1, 2, 3]) {
+            const url = new URL(base);
+            url.searchParams.set('page', String(page));
+            url.searchParams.set('category', '전체보기');
+            url.searchParams.set('count', '50');
+            url.searchParams.set('sort', 'false');
+            const response = await fetch(url, { headers });
+            if (!response.ok) throw new Error(`page ${page}: HTTP ${response.status}`);
+            const payload = await response.json();
+            if (!Array.isArray(payload.row)) throw new Error(`page ${page}: missing row`);
+            all.push(...payload.row);
+          }
+          const unique = [...new Map(all.filter((row) => row.area_nm).map((row) => [row.area_nm, row])).values()];
+          if (unique.length < 100) throw new Error(`only ${unique.length} unique hotspots returned`);
+          await import('node:fs/promises').then(({ writeFile }) => writeFile('out/seoul-hotspots.json', JSON.stringify(unique, null, 2)));
+          console.log(`HOTSPOT_COUNT=${unique.length}`);
+          console.log(JSON.stringify(unique.slice(0, 3), null, 2));
+          EOF
+          node /tmp/fetch.mjs | tee out/fetch-log.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: seoul-hotspot-metadata
+          path: out
+          if-no-files-found: error
