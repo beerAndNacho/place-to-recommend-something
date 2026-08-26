@@ -29,11 +29,13 @@ export function CrowdMap({
   selectedSlug,
   onSelect,
   showLabels = true,
+  compact = false,
 }: {
   places: RankedPlace[];
   selectedSlug?: string;
   onSelect?: (slug: string) => void;
   showLabels?: boolean;
+  compact?: boolean;
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
@@ -47,7 +49,7 @@ export function CrowdMap({
       container: containerRef.current,
       style,
       center: SEOUL_CENTER,
-      zoom: 11.15,
+      zoom: compact ? 12.4 : 11.15,
       minZoom: 9,
       maxZoom: 17,
       attributionControl: false,
@@ -65,7 +67,7 @@ export function CrowdMap({
       map.remove();
       mapRef.current = null;
     };
-  }, []);
+  }, [compact]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -103,10 +105,14 @@ export function CrowdMap({
         [Math.min(...longitudes), Math.min(...latitudes)],
         [Math.max(...longitudes), Math.max(...latitudes)],
       ];
-      map.fitBounds(bounds, { padding: 70, maxZoom: 12.3, duration: 0 });
+      map.fitBounds(bounds, {
+        padding: compact ? 36 : 70,
+        maxZoom: compact ? 13 : 12.3,
+        duration: 0,
+      });
       hasFitRef.current = true;
     }
-  }, [onSelect, places, selectedSlug, showLabels]);
+  }, [compact, onSelect, places, selectedSlug, showLabels]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -114,10 +120,10 @@ export function CrowdMap({
     if (!map || !selected) return;
     map.easeTo({
       center: [selected.longitude, selected.latitude],
-      zoom: Math.max(map.getZoom(), 13),
+      zoom: Math.max(map.getZoom(), compact ? 13.4 : 13),
       duration: 550,
     });
-  }, [places, selectedSlug]);
+  }, [compact, places, selectedSlug]);
 
   return <div ref={containerRef} className="crowd-map" aria-label="서울 장소 혼잡도 지도" />;
 }
