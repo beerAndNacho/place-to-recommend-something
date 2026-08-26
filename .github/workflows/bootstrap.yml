@@ -30,6 +30,16 @@ jobs:
           rm -rf .bootstrap
           rm -f .github/workflows/bootstrap.yml
           tar -xJf /tmp/place-project.tar.xz -C .
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('components/CrowdMap.tsx')
+          source = path.read_text()
+          source = source.replace(
+              'import maplibregl, { Map as MapLibreMap, type Marker, type StyleSpecification } from "maplibre-gl";',
+              'import * as maplibregl from "maplibre-gl";\nimport type { Map as MapLibreMap, Marker, StyleSpecification } from "maplibre-gl";',
+          )
+          path.write_text(source)
+          PY
 
       - name: Install dependencies
         run: npm install --no-audit --no-fund
