@@ -65,8 +65,7 @@ jobs:
       - name: Package source snapshot
         shell: bash
         run: |
-          rm -rf node_modules .next visual-captures
-          tar --exclude=.git -czf /tmp/source-snapshot.tar.gz .
+          tar --exclude=.git --exclude=node_modules --exclude=.next --exclude=visual-captures -czf /tmp/source-snapshot.tar.gz .
       - uses: actions/upload-artifact@v4
         with:
           name: visual-compare
