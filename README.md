@@ -2,6 +2,8 @@
 
 서울 주요 장소의 **혼잡도 + 예상 인구 + 목적 적합도 + 거리**를 한 화면에서 비교해 “지금 어디 갈지” 결정하도록 돕는 Next.js 프로젝트입니다.
 
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2FbeerAndNacho%2Fplace-to-recommend-something)
+
 - Repository: `beerAndNacho/place-to-recommend-something`
 - Framework: Next.js App Router + TypeScript
 - Map: MapLibre GL + OpenStreetMap
