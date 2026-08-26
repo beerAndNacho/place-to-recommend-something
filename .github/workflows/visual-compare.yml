@@ -20,7 +20,7 @@ jobs:
         run: |
           npm install --no-save playwright@1.52.0
           npx playwright install --with-deps chromium
-      - name: Capture reference and current deployment
+      - name: Capture reference and redesigned deployment
         shell: bash
         run: |
           set -euo pipefail
@@ -31,7 +31,7 @@ jobs:
 
           const targets = [
             { name: 'reference', url: 'https://gjdong.vercel.app/crowd' },
-            { name: 'current', url: 'https://jigeum-eodi-seoul-live.vercel.app' },
+            { name: 'current', url: 'https://seoul-crowd-radar.vercel.app' },
           ];
           const sizes = [
             { name: 'desktop', width: 1440, height: 1000 },
@@ -47,7 +47,12 @@ jobs:
             });
             const page = await context.newPage();
             for (const target of targets) {
-              const response = await page.goto(target.url, { waitUntil: 'domcontentloaded', timeout: 60000 });
+              let response;
+              for (let attempt = 1; attempt <= 12; attempt += 1) {
+                response = await page.goto(target.url, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => undefined);
+                if (response?.status() === 200) break;
+                await page.waitForTimeout(5000);
+              }
               await page.waitForTimeout(10000);
               await page.screenshot({
                 path: path.join('visual-captures', `${target.name}-${size.name}.png`),
@@ -55,7 +60,10 @@ jobs:
               });
               const bodyText = await page.locator('body').innerText().catch(() => '');
               const title = await page.title().catch(() => '');
-              console.log(JSON.stringify({ target: target.name, size: size.name, status: response?.status(), title, body: bodyText.slice(0, 2000) }));
+              console.log(JSON.stringify({ target: target.name, size: size.name, status: response?.status(), title, body: bodyText.slice(0, 2500) }));
+              if (target.name === 'current' && response?.status() !== 200) {
+                throw new Error(`redesigned deployment returned ${response?.status()}`);
+              }
             }
             await context.close();
           }
