@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { cookies } from "next/headers";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { CrowdBadge } from "@/components/CrowdBadge";
@@ -6,12 +7,13 @@ import { CrowdMap } from "@/components/CrowdMap";
 import { ForecastChart } from "@/components/ForecastChart";
 import { ArrowIcon, ChevronLeftIcon, ClockIcon, PinIcon, SparklesIcon, UsersIcon } from "@/components/icons";
 import { MOCK_PLACES, PLACE_DEFINITIONS } from "@/data/places";
+import { SEOUL_API_KEY_COOKIE } from "@/lib/api-key-settings";
 import { formatPopulationRange, TREND_META } from "@/lib/crowd";
 import { getPlaceBySlug } from "@/lib/place-service";
 import { recommendationLabel, scorePlace } from "@/lib/recommendation";
 import type { RankedPlace } from "@/types/place";
 
-export const revalidate = 900;
+export const dynamic = "force-dynamic";
 
 export function generateStaticParams() {
   return PLACE_DEFINITIONS.map((place) => ({ slug: place.slug }));
@@ -34,7 +36,9 @@ export default async function PlaceDetailPage(
   context: { params: Promise<{ slug: string }> },
 ) {
   const { slug } = await context.params;
-  const { place, payload } = await getPlaceBySlug(slug);
+  const cookieStore = await cookies();
+  const browserApiKey = cookieStore.get(SEOUL_API_KEY_COOKIE)?.value;
+  const { place, payload } = await getPlaceBySlug(slug, browserApiKey);
   if (!place) notFound();
 
   const score = scorePlace(place, "all");
