@@ -10,6 +10,12 @@ function integerEnv(name: string, fallback: number, min: number, max: number): n
   return Math.max(min, Math.min(max, parsed));
 }
 
+function resolveApiKey(apiKeyOverride?: string): string | undefined {
+  const browserKey = apiKeyOverride?.trim();
+  if (browserKey) return browserKey;
+  return process.env.SEOUL_API_KEY?.trim() || undefined;
+}
+
 function mockPayload(notice?: string): PlacesPayload {
   return {
     mode: "mock",
@@ -23,8 +29,8 @@ function mockPayload(notice?: string): PlacesPayload {
   };
 }
 
-export async function getPlacesPayload(): Promise<PlacesPayload> {
-  const apiKey = process.env.SEOUL_API_KEY?.trim();
+export async function getPlacesPayload(apiKeyOverride?: string): Promise<PlacesPayload> {
+  const apiKey = resolveApiKey(apiKeyOverride);
   if (!apiKey) return mockPayload();
 
   const cacheSeconds = integerEnv("SEOUL_API_CACHE_SECONDS", 900, 60, 86_400);
@@ -88,6 +94,7 @@ export async function getPlacesPayload(): Promise<PlacesPayload> {
 
 export async function getPlaceBySlug(
   slug: string,
+  apiKeyOverride?: string,
 ): Promise<{ place: Place | undefined; payload: PlacesPayload }> {
   const fallback = getMockPlace(slug);
   const definition = PLACE_DEFINITIONS.find((item) => item.slug === slug);
@@ -95,7 +102,7 @@ export async function getPlaceBySlug(
     return { place: undefined, payload: mockPayload() };
   }
 
-  const apiKey = process.env.SEOUL_API_KEY?.trim();
+  const apiKey = resolveApiKey(apiKeyOverride);
   if (!apiKey) {
     const payload = mockPayload();
     return { place: fallback, payload: { ...payload, places: [fallback] } };
@@ -129,7 +136,7 @@ export async function getPlaceBySlug(
         mode: "mixed",
         updatedAt: new Date().toISOString(),
         places: [place],
-        notice: "실데이터 호출에 실패해 이 장소만 fallback 데이터로 톜시합니다.",
+        notice: "실데이터 호출에 실패해 이 장소만 fallback 데이터로 표시합니다.",
         liveCount: 0,
         fallbackCount: 1,
       },
