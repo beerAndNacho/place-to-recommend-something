@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { RefreshIcon } from "@/components/icons";
 import { CROWD_META } from "@/lib/crowd";
@@ -48,10 +49,10 @@ export function AppHeader() {
   return (
     <header className="radar-header">
       <div className="radar-header__primary">
-        <div className="radar-brand">
+        <Link href="/" className="radar-brand" aria-label="서울 인파레이더 홈">
           <strong>서울 인파레이더</strong>
           <span>실시간 인구밀집 상황판 · 서울 주요 장소</span>
-        </div>
+        </Link>
 
         <div className="radar-city-switch" role="group" aria-label="도시 선택">
           <button type="button" className="is-active">서울</button>
@@ -80,6 +81,7 @@ export function AppHeader() {
           <button type="button" aria-label="새로고침" title="새로고침" onClick={() => window.location.reload()}>
             <RefreshIcon />
           </button>
+          <Link href="/settings">API 설정</Link>
           <a href="https://github.com/beerAndNacho/place-to-recommend-something" target="_blank" rel="noreferrer">GitHub ↗</a>
         </div>
       </div>
