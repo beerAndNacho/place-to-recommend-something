@@ -1,0 +1,79 @@
+name: API settings smoke test
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Wait for public deployment and verify APIs
+        shell: bash
+        run: |
+          set -euo pipefail
+          base_url="https://seoul-crowd-radar-v5.vercel.app"
+          for attempt in $(seq 1 36); do
+            settings_status=$(curl -L -sS --max-time 25 -o /tmp/settings.html -w '%{http_code}' "$base_url/settings" || true)
+            api_status=$(curl -L -sS --max-time 25 -o /tmp/settings.json -w '%{http_code}' "$base_url/api/settings" || true)
+            health_status=$(curl -L -sS --max-time 25 -o /tmp/health.json -w '%{http_code}' "$base_url/api/health" || true)
+            echo "attempt=$attempt settings=$settings_status api=$api_status health=$health_status"
+            if [[ "$settings_status" == "200" && "$api_status" == "200" && "$health_status" == "200" ]] \
+              && grep -q '서울 API 인증키 설정' /tmp/settings.html \
+              && grep -q 'browserKeyConfigured' /tmp/settings.json \
+              && grep -q 'keySource' /tmp/health.json \
+              && ! grep -qi 'Login – Vercel' /tmp/settings.html; then
+              break
+            fi
+            sleep 5
+          done
+          [[ "$settings_status" == "200" && "$api_status" == "200" && "$health_status" == "200" ]]
+          invalid_status=$(curl -sS --max-time 25 -o /tmp/invalid.json -w '%{http_code}' \
+            -X POST -H 'Content-Type: application/json' \
+            --data '{"apiKey":"bad"}' "$base_url/api/settings")
+          [[ "$invalid_status" == "400" ]]
+          delete_status=$(curl -sS --max-time 25 -D /tmp/delete-headers.txt -o /tmp/delete.json -w '%{http_code}' \
+            -X DELETE "$base_url/api/settings")
+          [[ "$delete_status" == "200" ]]
+          grep -qi 'set-cookie: seoul_api_key=' /tmp/delete-headers.txt
+          echo "SETTINGS_URL_OK=$base_url/settings"
+          cat /tmp/settings.json
+          cat /tmp/health.json
+      - name: Capture desktop and mobile settings screenshots
+        shell: bash
+        run: |
+          npm install --no-save playwright@1.52.0
+          npx playwright install --with-deps chromium
+          mkdir -p settings-captures
+          cat > /tmp/capture.mjs <<'EOF'
+          import { chromium } from 'playwright';
+          const browser = await chromium.launch({ headless: true });
+          for (const size of [
+            { name: 'desktop', width: 1440, height: 1100 },
+            { name: 'mobile', width: 390, height: 844 },
+          ]) {
+            const context = await browser.newContext({ viewport: size, locale: 'ko-KR' });
+            const page = await context.newPage();
+            await page.goto('https://seoul-crowd-radar-v5.vercel.app/settings', { waitUntil: 'networkidle', timeout: 60000 });
+            await page.screenshot({ path: `settings-captures/settings-${size.name}.png`, fullPage: true });
+            const text = await page.locator('body').innerText();
+            if (!text.includes('서울 API 인증키 설정')) throw new Error('settings title missing');
+            if (!text.includes('검증하고 저장')) throw new Error('save control missing');
+            if (!text.includes('Vercel 환경변수 설정 열기')) throw new Error('Vercel settings control missing');
+            await context.close();
+          }
+          await browser.close();
+          EOF
+          node /tmp/capture.mjs
+      - uses: actions/upload-artifact@v4
+        with:
+          name: api-settings-screenshots
+          path: settings-captures
+          if-no-files-found: error
